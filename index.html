@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>ImmoRentabilité — Simulateur Premium</title>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root {
+      --or:      #C9A84C;
+      --or-light:#E8C96A;
+      --or-dark: #A07830;
+      --noir:    #0A0A0A;
+      --noir2:   #111111;
+      --noir3:   #1A1A1A;
+      --noir4:   #222222;
+      --noir5:   #2C2C2C;
+      --gris1:   #3A3A3A;
+      --gris2:   #555555;
+      --gris3:   #888888;
+      --gris4:   #BBBBBB;
+      --blanc:   #F5F0E8;
+      --vert:    #2D6A4F;
+      --vert-l:  #40916C;
+      --rouge:   #8B2020;
+      --rouge-l: #C0392B;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      background: var(--noir);
+      color: var(--blanc);
+      -webkit-font-smoothing: antialiased;
+    }
+    input, select, button, textarea { font-family: 'Inter', system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 3px; }
+    ::-webkit-scrollbar-track { background: var(--noir2); }
+    ::-webkit-scrollbar-thumb { background: var(--or-dark); border-radius: 99px; }
+
+    /* Ligne dorée décorative */
+    .gold-line {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--or), transparent);
+      margin: 0;
+    }
+    @media print {
+      body { background:#fff !important; }
+      .no-print { display:none !important; }
+      .print-show { display:block !important; }
+      * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+    .print-show { display:none; }
+  </style>
+</head>
+<body style="background:#0A0A0A; margin:0;">
+  <div id="root" style="background:#0A0A0A; min-height:100vh;"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    // ─── DONNÉES EN TEMPS RÉEL ────────────────────────────────────────────────
+    // URL du fichier de données — hébergé sur GitHub, mis à jour 2x/mois
+    // Remplacez cette URL par votre propre URL GitHub après création du repo
+    const DATA_URL = "https://raw.githubusercontent.com/Antho53370/immo-data/refs/heads/main/data.json";
+
+    // Hook pour charger les données live
+    function useLiveData() {
+      const [data, setData]     = useState(null);
+      const [loaded, setLoaded] = useState(false);
+
+      useEffect(() => {
+        fetch(DATA_URL + "?t=" + Date.now()) // Cache-busting
+          .then(r => r.json())
+          .then(d => { setData(d); setLoaded(true); })
+          .catch(() => { setLoaded(true); }); // En cas d'erreur, on utilise les données par défaut
+      }, []);
+
+      return { data, loaded };
+    }
+
+    // Fonction pour récupérer une valeur live ou la valeur par défaut
+    function getLive(data, path, defaultVal) {
+      if (!data) return defaultVal;
+      try {
+        return path.split(".").reduce((o, k) => o[k], data) ?? defaultVal;
+      } catch(e) { return defaultVal; }
+    }
+    const REGIME_INFO = {
+      nu:         { label:"Location Nue",       color:"#E8C050", regimes:["Micro-foncier (30% abatt., <15 000€/an)","Régime réel (déduction des charges)"],    description:"Revenus imposés dans la catégorie des revenus fonciers" },
+      meuble_np:  { label:"LMNP (Meublé non pro)", color:"#40916C", regimes:["Micro-BIC (50% abatt., <77 700€/an)","Régime réel (amortissement possible)"],   description:"Loueur en Meublé Non Professionnel — avantage fiscal via l'amortissement" },
+      meuble_pro: { label:"LMP (Meublé pro)",    color:"#A07830", regimes:["Régime réel obligatoire","Imputation des déficits sur revenu global"],             description:"Loueur en Meublé Professionnel — recettes >23 000€ et >50% revenus du foyer" },
+      sci_is:     { label:"SCI à l'IS",          color:"#C0392B", regimes:["IS 15% jusqu'à 42 500€","IS 25% au-delà"],                                         description:"Société Civile Immobilière soumise à l'Impôt sur les Sociétés" },
+    };
+
+    const iS = { flex:1, border:"1px solid #2C2C2C", borderRadius:6, padding:"8px 12px", fontSize:14, color:"#FFFFFF", background:"#1A1A1A", width:"100%", outline:"none", fontFamily:"'Inter',system-ui,sans-serif" };
+    const OR   = "#E8C050";
+    const OR2  = "#F0D060";
+    const OR3  = "#A07830";
+    const N2   = "#111111";
+    const N3   = "#1A1A1A";
+    const N5   = "#2C2C2C";
+    const G3   = "#AAAAAA";
+    const BL   = "#FFFFFF";
+    const goldLine = { height:1, background:"linear-gradient(90deg,transparent,#E8C050,transparent)", margin:"12px 0" };
+
+    const ZONES = {
+      paris_intra:      { label:"Paris intra-muros",               taux:2.5, tendance:"hausse", ctx:"Marché très liquide, demande soutenue.", col:"#A07830" },
+      idf_petite:       { label:"Île-de-France (petite couronne)", taux:1.8, tendance:"hausse", ctx:"Forte demande structurelle.", col:"#6d28d9" },
+      idf_grande:       { label:"Île-de-France (grande couronne)", taux:1.5, tendance:"stable", ctx:"Marché accessible, reprise progressive.", col:"#8b5cf6" },
+      lyon:             { label:"Lyon / Métropole",                taux:2.8, tendance:"hausse", ctx:"2e marché français, forte attractivité.", col:"#E8C050" },
+      bordeaux:         { label:"Bordeaux / Gironde",              taux:2.0, tendance:"stable", ctx:"Après boom post-LGV, stabilisation.", col:"#E8C050" },
+      marseille:        { label:"Marseille / PACA",                taux:2.2, tendance:"hausse", ctx:"Marché en regain, prix accessibles.", col:"#0369a1" },
+      nantes:           { label:"Nantes / Pays de la Loire",       taux:2.5, tendance:"hausse", ctx:"Forte attractivité démographique.", col:"#E8C050" },
+      toulouse:         { label:"Toulouse / Occitanie",            taux:2.7, tendance:"hausse", ctx:"Croissance démographique, hub aéronautique.", col:"#40916C" },
+      nice_cote:        { label:"Nice / Côte d'Azur",             taux:2.4, tendance:"hausse", ctx:"Demande internationale soutenue.", col:"#0d9488" },
+      rennes:           { label:"Rennes / Bretagne",               taux:2.3, tendance:"hausse", ctx:"Forte attractivité, pénurie logements.", col:"#16a34a" },
+      strasbourg:       { label:"Strasbourg / Grand Est",          taux:1.8, tendance:"stable", ctx:"Marché stable, attractivité institutionnelle.", col:"#15803d" },
+      lille:            { label:"Lille / Hauts-de-France",         taux:1.9, tendance:"hausse", ctx:"Bonne rentabilité, marché étudiant actif.", col:"#E8C050" },
+      province_moyenne: { label:"Province / Ville moyenne",        taux:1.2, tendance:"stable", ctx:"Marché équilibré, bonne rentabilité locative.", col:"#A07830" },
+      rural:            { label:"Rural / Petite ville",            taux:0.5, tendance:"stable", ctx:"Valorisation faible, risque liquidité.", col:"#555555" },
+      station_balneaire:{ label:"Station balnéaire / Montagne",    taux:3.2, tendance:"hausse", ctx:"Forte demande saisonnière.", col:"#C0392B" },
+    };
+
+    const COEFF = { appartement:1.0, maison:0.95, immeuble:1.1, neuf:0.8, commercial:0.7, garage:0.6 };
+
+    const AMBL = {
+      studio:        { label:"Studio / Chambre",       icone:"🛏️", eco:{min:2000,max:3500}, standard:{min:3500,max:5000}, premium:{min:5000,max:8000},   detail:"Lit, bureau, kitchenette, électroménager de base" },
+      t1:            { label:"T1",                     icone:"🏠", eco:{min:3000,max:5000}, standard:{min:5000,max:7000}, premium:{min:7000,max:10000},  detail:"Salon, chambre, cuisine équipée, électroménager" },
+      t2:            { label:"T2",                     icone:"🏠", eco:{min:4500,max:6500}, standard:{min:6000,max:8000}, premium:{min:8000,max:12000},  detail:"Salon, 1 chambre, cuisine équipée" },
+      t3:            { label:"T3",                     icone:"🏘️", eco:{min:6000,max:8500}, standard:{min:8000,max:11000},premium:{min:11000,max:16000}, detail:"Salon, 2 chambres, cuisine équipée, lave-linge" },
+      t4:            { label:"T4",                     icone:"🏡", eco:{min:8000,max:12000},standard:{min:11000,max:16000},premium:{min:16000,max:22000},detail:"Salon, 3 chambres, électroménager complet" },
+      maison_petite: { label:"Maison 3–4 pièces",      icone:"🏡", eco:{min:9000,max:13000},standard:{min:13000,max:18000},premium:{min:18000,max:25000},detail:"Toutes pièces, lave-vaisselle, lave-linge" },
+      maison_grande: { label:"Maison 5+ pièces",       icone:"🏰", eco:{min:14000,max:20000},standard:{min:20000,max:30000},premium:{min:30000,max:45000},detail:"Grande maison, équipements premium" },
+      immeuble:      { label:"Immeuble (par logement)",icone:"🏗️", eco:{min:3000,max:5000}, standard:{min:5000,max:7500}, premium:{min:7500,max:12000},  detail:"Budget par logement — multiplier par nb d'unités" },
+    };
+
+    const NIVEAUX = {
+      rien:     { label:"✅ Rien à faire",           desc:"Bien en parfait état",                               color:"#40916C", min:0,    max:0 },
+      rafraichi:{ label:"🖌️ Rafraîchissement",       desc:"Peinture, sols, petites réparations",               color:"#E8C050", min:150,  max:400 },
+      partiel:  { label:"🔧 Rénovation partielle",   desc:"Cuisine/SDB ou électricité à rénover",              color:"#A07830", min:400,  max:900 },
+      complet:  { label:"🏗️ Rénovation complète",    desc:"Tout l'intérieur à refaire",                        color:"#C0392B", min:700,  max:1200 },
+      lourd:    { label:"💣 Gros œuvre",              desc:"Structure, charpente, tout à reconstruire",         color:"#A07830", min:1100, max:2500 },
+    };
+
+    // Coefficients de prix selon zone géographique
+    const COEFF_ZONE_TRAVAUX = {
+      paris:        1.40,  // Paris = +40%
+      idf_petite:   1.25,  // Petite couronne = +25%
+      idf_grande:   1.15,  // Grande couronne = +15%
+      grande_ville: 1.15,  // Lyon, Bordeaux, etc = +15%
+      ville_moy:    1.05,  // Ville moyenne = +5%
+      province:     1.00,  // Province = référence
+      rural:        0.90,  // Rural = -10%
+    };
+
+    const POSTES = [
+      // SALLE DE BAIN (max 10 000€ pour une SDB standard)
+      { id:"sdb_r",  icone:"🚿", label:"SDB — Rafraîchissement",       desc:"Peinture, joints, robinetterie",          min:1200,  max:3500,  moy:2000 },
+      { id:"sdb_c",  icone:"🛁", label:"SDB — Rénovation complète",     desc:"Carrelage, douche, vasque, plomberie",    min:4500,  max:9000,  moy:6500 },
+      { id:"sdb_hg", icone:"✨", label:"SDB — Haut de gamme",           desc:"Douche italienne, double vasque, tout neuf",min:8000, max:15000, moy:11000 },
+      // WC
+      { id:"wc_r",   icone:"🚽", label:"WC — Remplacement",             desc:"WC suspendu, faïence, peinture",          min:700,   max:2000,  moy:1200 },
+      { id:"wc_c",   icone:"🚽", label:"WC — Création séparée",         desc:"Cloison, plomberie, carrelage",           min:2000,  max:5000,  moy:3000 },
+      // CUISINE
+      { id:"cui_e",  icone:"🍳", label:"Cuisine — Équipement",          desc:"Façades, plan de travail, électroménager", min:2500,  max:6000,  moy:4000 },
+      { id:"cui_c",  icone:"🔧", label:"Cuisine — Rénovation complète", desc:"Meuble neuf, carrelage, électroménager",   min:5000,  max:12000, moy:8000 },
+      // SOLS
+      { id:"parq",   icone:"🪵", label:"Sol — Parquet ponçage",          desc:"Ponçage et vitrification parquet existant",min:12,   max:30,    moy:20,   u:"€/m²" },
+      { id:"parq_n", icone:"🪵", label:"Sol — Parquet neuf (pose)",      desc:"Stratifié ou massif posé",                min:35,    max:90,    moy:55,   u:"€/m²" },
+      { id:"carre",  icone:"⬜", label:"Sol — Carrelage",                desc:"Dépose, ragréage, pose neuf",             min:45,    max:100,   moy:65,   u:"€/m²" },
+      { id:"vinyle", icone:"🟫", label:"Sol — Vinyle/PVC",               desc:"Lino, sol souple, pose rapide",           min:18,    max:50,    moy:30,   u:"€/m²" },
+      // MURS
+      { id:"peintu", icone:"🖌️", label:"Murs & plafond — Peinture",     desc:"Enduit, ponçage, 2 couches peinture",     min:12,    max:40,    moy:22,   u:"€/m²" },
+      { id:"isol",   icone:"🧱", label:"Isolation thermique (ITI)",      desc:"Doublage murs, laine de verre",           min:45,    max:130,   moy:80,   u:"€/m²" },
+      // TECHNIQUE
+      { id:"elec",   icone:"⚡", label:"Électricité — Mise aux normes",  desc:"Tableau, câblage, prises, éclairage",     min:2500,  max:8000,  moy:5000 },
+      { id:"plomb",  icone:"🔩", label:"Plomberie — Réfection",          desc:"Colonnes, arrivées, évacuations",         min:2500,  max:8000,  moy:4500 },
+      { id:"chauf",  icone:"🔥", label:"Chauffage — Remplacement",       desc:"Chaudière gaz, PAC ou radiateurs élec.",  min:2500,  max:12000, moy:6000 },
+      // MENUISERIES
+      { id:"fenet",  icone:"🪟", label:"Fenêtres — Double vitrage",      desc:"PVC ou alu, pose incluse",                min:350,   max:1000,  moy:600,  u:"€/fenêtre" },
+      { id:"portes", icone:"🚪", label:"Portes intérieures",             desc:"Porte + bâti + poignée + pose",           min:250,   max:700,   moy:400,  u:"€/porte" },
+      // GROS OEUVRE
+      { id:"clois",  icone:"🧱", label:"Cloison (création/dépose)",      desc:"Plâtre ou démolition mur non porteur",    min:70,    max:200,   moy:130,  u:"€/m²" },
+      { id:"toit",   icone:"🏠", label:"Toiture — Réfection",            desc:"Tuiles, charpente, étanchéité",           min:120,   max:280,   moy:190,  u:"€/m²" },
+      { id:"facad",  icone:"🏛️", label:"Ravalement de façade",           desc:"Nettoyage, enduit, peinture façade",      min:25,    max:80,    moy:50,   u:"€/m²" },
+    ];
+
+    const LMNP_LIST = [
+      "🛏️ Literie avec couette ou couverture","🪟 Volets ou rideaux occultants dans la chambre",
+      "🍳 Plaques de cuisson","🔥 Four ou four à micro-ondes","❄️ Réfrigérateur",
+      "🧊 Congélateur ou compartiment (≤ −6°C)","🍽️ Vaisselle en nombre suffisant",
+      "🥄 Ustensiles de cuisine","🪑 Table et sièges","📦 Étagères de rangement",
+      "💡 Luminaires","🧹 Matériel d'entretien ménager",
+    ];
+
+    const PRIX_M2_LOCATIF = {
+      paris:       { label:"Paris intra-muros",           min:32, max:50, moy:39, color:"#A07830", info:"Marché sous tension, encadrement des loyers.", meuble:"+15 à +25%" },
+      idf_petite:  { label:"IDF petite couronne",         min:20, max:32, moy:26, color:"#6d28d9", info:"Hauts-de-Seine, Val-de-Marne, Seine-St-Denis.", meuble:"+10 à +20%" },
+      idf_grande:  { label:"IDF grande couronne",         min:14, max:22, moy:18, color:"#8b5cf6", info:"Yvelines, Val-d'Oise, Seine-et-Marne, Essonne.", meuble:"+10 à +15%" },
+      grande_ville:{ label:"Grande ville (Lyon, Nantes…)",min:13, max:20, moy:16, color:"#E8C050", info:"Lyon ~15€, Bordeaux ~14€, Toulouse ~14€/m².", meuble:"+10 à +20%" },
+      ville_moy:   { label:"Ville moyenne",               min:10, max:15, moy:12, color:"#E8C050", info:"50 000–200 000 hab. Dijon, Caen, Limoges…", meuble:"+10 à +15%" },
+      province:    { label:"Province / Petite ville",     min:7,  max:12, moy:9,  color:"#40916C", info:"<50 000 hab. Bonne rentabilité.", meuble:"+5 à +15%" },
+      rural:       { label:"Rural / Zone campagne",       min:5,  max:10, moy:7,  color:"#E8C050", info:"Marché peu liquide, vacance plus élevée.", meuble:"+5 à +10%" },
+    };
+
+    const POSTES_PRIX_IA = {
+      peinture:      { label:"Peinture murs & plafond",       min:15,  max:50,  moy:25,  u:"€/m²" },
+      parquet_ponce: { label:"Parquet — Ponçage/vernissage",  min:15,  max:40,  moy:25,  u:"€/m²" },
+      parquet_neuf:  { label:"Parquet neuf (pose)",           min:40,  max:120, moy:70,  u:"€/m²" },
+      carrelage:     { label:"Carrelage sol",                 min:50,  max:120, moy:80,  u:"€/m²" },
+      vinyle:        { label:"Revêtement vinyle/PVC",         min:20,  max:60,  moy:35,  u:"€/m²" },
+      isolation:     { label:"Isolation thermique (ITI)",     min:50,  max:150, moy:90,  u:"€/m²" },
+      placo:         { label:"Placo / doublage murs",         min:30,  max:80,  moy:50,  u:"€/m²" },
+      electricite:   { label:"Électricité (mise aux normes)", min:3000,max:10000,moy:5500,u:"€ forfait" },
+      electricite_p: { label:"Électricité (prise/inter)",    min:80,  max:250, moy:150, u:"€/point" },
+      plomberie:     { label:"Plomberie (réfection)",         min:3000,max:9000, moy:5000,u:"€ forfait" },
+      chauffage:     { label:"Radiateur électrique",          min:200, max:600, moy:350, u:"€/unité" },
+      fenetres:      { label:"Fenêtre double vitrage",        min:400, max:1200,moy:700, u:"€/fenêtre" },
+      porte_int:     { label:"Porte intérieure",              min:300, max:800, moy:450, u:"€/porte" },
+      porte_ext:     { label:"Porte d'entrée blindée",        min:800, max:3000,moy:1500,u:"€/porte" },
+      sdb:           { label:"Salle de bain (rénovation)",    min:5000,max:14000,moy:8000,u:"€ forfait" },
+      wc:            { label:"WC (remplacement)",             min:800, max:2500,moy:1500,u:"€ forfait" },
+      cuisine:       { label:"Cuisine aménagée",              min:6000,max:15000,moy:9000,u:"€ forfait" },
+      demolition:    { label:"Démolition / dépose",           min:20,  max:80,  moy:40,  u:"€/m²" },
+      nettoyage:     { label:"Nettoyage de chantier",         min:500, max:2000,moy:1000,u:"€ forfait" },
+    };
+
+    const NIVEAUX_IA = {
+      tres_bon:  { label:"✅ Très bon état",         desc:"Rien à faire ou retouches mineures",   color:"#40916C" },
+      rafraichi: { label:"🖌️ Rafraîchissement",      desc:"Peinture, sol — logement habitable",   color:"#E8C050" },
+      partiel:   { label:"🔧 Rénovation partielle",  desc:"1 ou 2 postes importants à refaire",   color:"#A07830" },
+      complet:   { label:"🏗️ Rénovation complète",   desc:"Tout l'intérieur à refaire",           color:"#C0392B" },
+      lourd:     { label:"💣 Gros œuvre nécessaire", desc:"Structure, tout à reconstruire",        color:"#A07830" },
+    };
+
+    const PROMPT_IA = (type, surf) => `Tu es un expert en rénovation immobilière française avec 20 ans d'expérience. Analyse cette photo de ${type} (surface estimée : ${surf} m²).
+
+Réponds UNIQUEMENT en JSON valide, sans texte avant ni après, sans balises markdown.
+
+Format exact :
+{
+  "niveau_global": "tres_bon" | "rafraichi" | "partiel" | "complet" | "lourd",
+  "resume": "2 phrases max sur l'état général",
+  "observations": ["observation concrète 1", "observation concrète 2", "observation concrète 3"],
+  "postes": [
+    { "id": "peinture", "urgent": true, "quantite": 18, "unite": "m²", "note": "description de ce qui est visible" }
+  ],
+  "avertissements": ["humidité visible si présente", "amiante possible si bâtiment avant 1997"],
+  "photo_apres": "Description très détaillée et inspirante de la pièce après rénovation idéale : matériaux, couleurs, style, ambiance"
+}
+
+IDs disponibles : peinture, parquet_ponce, parquet_neuf, carrelage, vinyle, isolation, placo, electricite, electricite_p, plomberie, chauffage, fenetres, porte_int, porte_ext, sdb, wc, cuisine, demolition, nettoyage.
+
+Règles : sois précis, n'invente pas ce que tu ne vois pas, quantité = m² pour postes au m² ou 1 pour forfaits.`;
+
+    // ─── COMPOSANTS UTILITAIRES ───────────────────────────────────────────────
+    function Sec({ title, icon, children, defaultOpen=false }) {
+      const [open, setOpen] = useState(defaultOpen);
+      return (
+        <div style={{ marginBottom:10, borderRadius:8, overflow:"hidden", border:"1px solid #2C2C2C" }}>
+          <button onClick={()=>setOpen(o=>!o)} style={{ width:"100%", background:"#111", color:"#FFFFFF", border:"none", borderLeft:"2px solid #C9A84C", padding:"12px 16px", display:"flex", alignItems:"center", gap:10, cursor:"pointer", fontSize:12, fontWeight:500, fontFamily:"'Inter',system-ui,sans-serif", letterSpacing:"0.3px" }}>
+            <span style={{ fontSize:14 }}>{icon}</span>
+            <span style={{ flex:1, textAlign:"left", textTransform:"uppercase", letterSpacing:"1.5px", fontSize:10, color:"#E8C050" }}>{title}</span>
+            <div style={{ display:"flex", alignItems:"center", gap:5, flexShrink:0 }}>
+              <span style={{ fontSize:10, color:"#FFFFFF", fontWeight:400 }}>{open?"Réduire":"Ouvrir"}</span>
+              <span style={{ fontSize:16, color:"#E8C050", transform:open?"rotate(90deg)":"rotate(0deg)", transition:"transform 0.25s", display:"inline-block" }}>›</span>
+            </div>
+          </button>
+          {open && <div style={{ padding:"14px 16px", background:"#0A0A0A", borderTop:"1px solid #1A1A1A" }}>{children}</div>}
+        </div>
+      );
+    }
+
+    function F({ label, sublabel, value, onChange, suffix, step=1, options, tooltip }) {
+      const [raw, setRaw] = useState(String(value));
+      useEffect(() => { setRaw(String(value)); }, [value]);
+      return (
+        <div style={{ marginBottom:12 }}>
+          <label style={{ display:"block", fontSize:9, fontWeight:500, color:"#FFFFFF", marginBottom:4, textTransform:"uppercase", letterSpacing:"1.5px" }}>
+            {label}{tooltip && <span title={tooltip} style={{ marginLeft:4, color:"#E8C050", fontSize:10, cursor:"help" }}>ⓘ</span>}
+          </label>
+          {sublabel && <div style={{ fontSize:10, color:"#FFFFFF", marginBottom:4, fontStyle:"italic", color:"#FFFFFF" }}>{sublabel}</div>}
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            {options ? (
+              <select value={value} onChange={e=>onChange(e.target.value)} style={{ ...iS, color:"#FFFFFF" }}>
+                {options.map(o=><option key={o.value} value={o.value} style={{ background:"#1A1A1A" }}>{o.label}</option>)}
+              </select>
+            ) : (
+              <input type="text" inputMode="decimal" value={raw}
+                onFocus={e=>{ if(raw==="0") setRaw(""); e.target.select(); }}
+                onBlur={()=>{ const n=parseFloat(raw); if(isNaN(n)){setRaw("0");onChange(0);}else{setRaw(String(n));onChange(n);} }}
+                onChange={e=>{ setRaw(e.target.value); const n=parseFloat(e.target.value); if(!isNaN(n)) onChange(n); }}
+                style={{ ...iS }} />
+            )}
+            {suffix && <span style={{ fontSize:11, color:"#E8C050", whiteSpace:"nowrap", fontWeight:500 }}>{suffix}</span>}
+          </div>
+        </div>
+      );
+    }
+
+    function Gauge({ value, max, label, color }) {
+      const pct = Math.min(100, Math.max(0, (value/max)*100));
+      return (
+        <div style={{ marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, marginBottom:4 }}>
+            <span style={{ color:"#FFFFFF", textTransform:"uppercase", letterSpacing:"1px" }}>{label}</span>
+            <span style={{ fontWeight:600, color:"#E8C050" }}>{value.toFixed(2)}%</span>
+          </div>
+          <div style={{ height:3, background:"#1A1A1A", borderRadius:99, overflow:"hidden" }}>
+            <div style={{ height:"100%", width:`${pct}%`, background:"linear-gradient(90deg,#E8C050,#E8C96A)", borderRadius:99 }}/>
+          </div>
+        </div>
+      );
+    }
+
+
+
+    // ─── PAGE SIMULATEUR ──────────────────────────────────────────────────────
+    function PageSimulateur({ onSauvegarder, onPDF }) {
+      const fmt  = n => Math.round(n).toLocaleString("fr-FR");
+      const fmtE = n => `${Math.round(n).toLocaleString("fr-FR")} €`;
+      const fmtP = n => `${n.toFixed(2)}%`;
+
+      // Chargement des données live
+      const { data: liveData, loaded } = useLiveData();
+
+      // Taux de crédit live (avec valeurs par défaut si pas encore chargé)
+      const tauxDefaut20ans = getLive(liveData, "taux_credit.immo_20ans", 3.65);
+      const tauxDefautTrax  = getLive(liveData, "taux_credit.travaux_court", 5.50);
+      const tauxDefautAmbl  = getLive(liveData, "taux_credit.conso_court", 5.50);
+
+      // Prix m² locatif live
+      const prixM2Live = liveData?.prix_m2_locatif || null;
+
+      // Valorisation live
+      const zonesLive = liveData?.valorisation_annuelle || null;
+
+      // Date de mise à jour
+      const dateMaj = liveData?.mise_a_jour || null;
+      const prochaineMaj = liveData?.prochaine_maj || null;
+
+      const [typeBien,setTypeBien]       = useState("appartement");
+      const [prixAchat,setPrixAchat]     = useState(200000);
+      const [surface,setSurface]         = useState(50);
+      const [ville,setVille]             = useState("province");
+      const [apport,setApport]           = useState(40000);
+      const [duree,setDuree]             = useState(20);
+      const [tauxCredit,setTauxCredit]   = useState(3.65);
+      const [assurCredit,setAssurCredit] = useState(0.35);
+      const [fraisNot,setFraisNot]       = useState(8.0);
+      const [agence,setAgence]           = useState(0);
+      const [travaux,setTravaux]         = useState(0);
+
+      // Taux par durée — mis à jour depuis data.json ou valeurs par défaut
+      const TAUX_PAR_DUREE = {
+        10: getLive(liveData, "taux_credit.immo_10ans", 3.20),
+        15: getLive(liveData, "taux_credit.immo_15ans", 3.40),
+        20: getLive(liveData, "taux_credit.immo_20ans", 3.65),
+        25: getLive(liveData, "taux_credit.immo_25ans", 3.85),
+      };
+
+      // Fonction pour trouver le taux selon la durée (interpolation entre les paliers)
+      const getTauxParDuree = (d) => {
+        if (d <= 10) return TAUX_PAR_DUREE[10];
+        if (d <= 15) return +(TAUX_PAR_DUREE[10] + (TAUX_PAR_DUREE[15] - TAUX_PAR_DUREE[10]) * (d - 10) / 5).toFixed(2);
+        if (d <= 20) return +(TAUX_PAR_DUREE[15] + (TAUX_PAR_DUREE[20] - TAUX_PAR_DUREE[15]) * (d - 15) / 5).toFixed(2);
+        return +(TAUX_PAR_DUREE[20] + (TAUX_PAR_DUREE[25] - TAUX_PAR_DUREE[20]) * Math.min(d - 20, 5) / 5).toFixed(2);
+      };
+
+      // Quand la durée change → taux se met à jour automatiquement
+      const handleDureeChange = (d) => {
+        setDuree(d);
+        setTauxCredit(getTauxParDuree(d));
+      };
+
+      // Mise à jour des taux par défaut quand les données live arrivent
+      useEffect(() => {
+        if (liveData?.taux_credit) {
+          setTauxCredit(getTauxParDuree(duree));
+          setAssurCredit(liveData.taux_credit.assurance_emprunteur_moy);
+        }
+        if (liveData?.frais_notaire) {
+          setFraisNot(liveData.frais_notaire.ancien_moy);
+        }
+      }, [liveData]);
+      const [loyer,setLoyer]             = useState(800);
+      const [vacance,setVacance]         = useState(0.5);
+      const [regime,setRegime]           = useState("meuble_np");
+      const [taxeFonc,setTaxeFonc]       = useState(1200);
+      const [copro,setCopro]             = useState(1200);
+      const [pno,setPno]                 = useState(200);
+      const [gli,setGli]                 = useState(0);
+      const [entretien,setEntretien]     = useState(500);
+      const [gestionLoc,setGestionLoc]   = useState(0);
+      const [cfe,setCfe]                 = useState(0);
+      const [fraisPub,setFraisPub]       = useState(0);
+      const [nbLots,setNbLots]           = useState(1);
+      const [prixCpt,setPrixCpt]         = useState(250);
+      const [autres,setAutres]           = useState(0);
+      const [tmi,setTmi]                 = useState(30);
+      const [revFoyer,setRevFoyer]       = useState(45000);
+      const [region,setRegion]           = useState("province_moyenne");
+      const [horizon,setHorizon]         = useState(10);
+      const [regionManu,setRegionManu]   = useState(false);
+      const [showLMNP,setShowLMNP]       = useState(false);
+      const [nomBien,setNomBien]         = useState("");
+      const [typeLog,setTypeLog]         = useState("t2");
+      const [gamme,setGamme]             = useState("standard");
+      const [budAmeubl,setBudAmeubl]     = useState(0);
+      const [inclAmeubl,setInclAmeubl]   = useState(false);
+      const [niveauReno,setNiveauReno]   = useState("");
+      const [actifs,setActifs]           = useState({});
+      const [montants,setMontants]       = useState({});
+      const [tauxTrax,setTauxTrax]       = useState(5.5);
+      const [dureeTrax,setDureeTrax]     = useState(10);
+      const [tauxAmbl,setTauxAmbl]       = useState(6.0);
+      const [dureeAmbl,setDureeAmbl]     = useState(5);
+      const [zoneLoyer,setZoneLoyer]     = useState("province");
+      const [showGrille,setShowGrille]   = useState(false);
+
+      const VILLE_MAP = { paris:"paris_intra", grande_ville:"lyon", province:"province_moyenne", rural:"rural" };
+      const VILLE_LOYER_MAP = { paris:"paris", grande_ville:"grande_ville", province:"province", rural:"rural" };
+      const handleVille = v => { setVille(v); if(!regionManu) setRegion(VILLE_MAP[v]||"province_moyenne"); setZoneLoyer(VILLE_LOYER_MAP[v]||"province"); };
+      const handleRegion = r => { setRegion(r); setRegionManu(true); };
+
+      // Coefficient zone pour les travaux
+      const coeffZone = COEFF_ZONE_TRAVAUX[zoneLoyer] || 1.0;
+      const getMin = (p) => Math.round((p.u ? p.min * surface : p.min) * coeffZone);
+      const getMax = (p) => Math.round((p.u ? p.max * surface : p.max) * coeffZone);
+      const getMoy = (p) => Math.round((p.u ? p.moy * surface : p.moy) * coeffZone);
+
+      const totalPostes = POSTES.reduce((acc,p)=>{ if(!actifs[p.id]) return acc; const def=getMoy(p); return acc+(montants[p.id]??def); },0);
+      const totalGlobal = niveauReno&&niveauReno!=="rien" ? surface*((NIVEAUX[niveauReno].min+NIVEAUX[niveauReno].max)/2)*coeffZone : 0;
+      const totalTrax   = Math.round(totalGlobal+totalPostes);
+
+      const ameubl = AMBL[typeLog]||AMBL.t2;
+      const gData  = ameubl[gamme]||ameubl.standard;
+      const estMeuble = ["meuble_np","meuble_pro"].includes(regime);
+      const amortAmbl = inclAmeubl&&budAmeubl>0 ? budAmeubl/7 : 0;
+      const budAmblTot= inclAmeubl ? budAmeubl : 0;
+
+      const fraisNotE  = prixAchat*(fraisNot/100);
+      const invTotal   = prixAchat+fraisNotE+agence+travaux+budAmblTot;
+      const baseImmo   = prixAchat+fraisNotE+agence;
+      const emprunImmo = Math.max(0, baseImmo-apport);
+      const apportR1   = Math.max(0, apport-baseImmo);
+      const tMensImmo  = (tauxCredit+assurCredit)/100/12;
+      const nMoisImmo  = duree*12;
+      const mensImmo   = emprunImmo>0&&tMensImmo>0 ? emprunImmo*tMensImmo/(1-Math.pow(1+tMensImmo,-nMoisImmo)) : 0;
+      const traxParApport  = Math.min(travaux,apportR1);
+      const emprunTrax     = Math.max(0,travaux-traxParApport);
+      const apportR2       = apportR1-traxParApport;
+      const tMensTrax      = tauxTrax/100/12;
+      const nMoisTrax      = dureeTrax*12;
+      const mensTrax       = emprunTrax>0&&tMensTrax>0 ? emprunTrax*tMensTrax/(1-Math.pow(1+tMensTrax,-nMoisTrax)) : 0;
+      const amblParApport  = Math.min(budAmblTot,apportR2);
+      const emprunAmbl     = Math.max(0,budAmblTot-amblParApport);
+      const tMensAmbl      = tauxAmbl/100/12;
+      const nMoisAmbl      = dureeAmbl*12;
+      const mensAmbl       = emprunAmbl>0&&tMensAmbl>0 ? emprunAmbl*tMensAmbl/(1-Math.pow(1+tMensAmbl,-nMoisAmbl)) : 0;
+      const mensTot   = mensImmo+mensTrax+mensAmbl;
+      const annuite   = mensTot*12;
+      const loyerBrut = loyer*12;
+      const loyerNet  = loyerBrut-loyer*vacance;
+      const cpt       = nbLots*prixCpt;
+      const charges   = taxeFonc+copro+pno+gli+entretien+cpt+gestionLoc+cfe+fraisPub+autres;
+      const interets  = emprunImmo*tauxCredit/100 + emprunTrax*tauxTrax/100 + emprunAmbl*tauxAmbl/100;
+      const cfBrut    = loyerNet-charges-annuite;
+
+      let baseImp=0, impot=0, ps=0, noteFisc="";
+
+      if(regime==="nu"){
+        // ── LOCATION NUE — Revenus Fonciers ──────────────────────────────────
+        // Régime réel : loyers - charges déductibles (taxe foncière, copro, PNO, GLI,
+        // entretien, expert-comptable, intérêts d'emprunt). PAS d'amortissement.
+        // Imposition : TMI + 17,2% prélèvements sociaux
+        const chargesDeductiblesNu = taxeFonc + copro + pno + gli + entretien + cpt + gestionLoc + cfe + fraisPub + autres + interets;
+        baseImp = Math.max(0, loyerNet - chargesDeductiblesNu);
+        impot = baseImp * (tmi/100);
+        ps    = baseImp * 0.172; // Prélèvements sociaux 17,2% sur revenus fonciers
+        noteFisc = `Revenus fonciers imposés au TMI ${tmi}% + 17,2% PS. Charges déduites : ${fmt(chargesDeductiblesNu)} €/an. Pas d'amortissement possible.`;
+
+      } else if(regime==="meuble_np"){
+        // ── LMNP RÉGIME RÉEL — BIC ───────────────────────────────────────────
+        // Amortissement : bien hors terrain (~85% du prix) sur 30–40 ans = ~2,5–3%
+        // Terrain non amortissable (~15% du prix)
+        // Travaux amortis sur 10 ans (10%/an)
+        // Mobilier amorti sur 5–7 ans (~15%/an)
+        // Si base imposable = 0 → AUCUN impôt ni PS (c'est le gros avantage du LMNP réel)
+        // Charges déductibles : TOUTES les charges + intérêts + amortissements
+        const valeurAmortissable = prixAchat * 0.85; // Hors terrain (15% non amortissable)
+        const amortBien    = valeurAmortissable * 0.03;  // ~3%/an sur 33 ans
+        const amortTravaux = travaux * 0.10;             // 10%/an sur 10 ans
+        const amortMobilier= amortAmbl;                  // 1/7e par an (saisi par user)
+        const amortTotal   = amortBien + amortTravaux + amortMobilier;
+        const chargesDeductiblesLMNP = charges + interets + amortTotal;
+        baseImp = Math.max(0, loyerNet - chargesDeductiblesLMNP);
+        // En BIC réel : si base = 0, impôt = 0 et PAS de PS
+        // Si base > 0 : TMI + 17,2% PS (comme BNC)
+        impot = baseImp * (tmi/100);
+        ps    = baseImp * 0.172;
+        const economieGrace = amortTotal > 0 && baseImp === 0 ? "✅ Résultat fiscal nul grâce aux amortissements — aucun impôt ni PS !" : "";
+        noteFisc = `BIC réel. Amortissement bien : ${fmt(amortBien)} €/an + travaux : ${fmt(amortTravaux)} €/an + mobilier : ${fmt(amortMobilier)} €/an = ${fmt(amortTotal)} €/an total. ${economieGrace}`;
+
+      } else if(regime==="meuble_pro"){
+        // ── LMP — BIC PROFESSIONNEL ──────────────────────────────────────────
+        // Mêmes règles d'amortissement que LMNP mais :
+        // - Déficits imputables sur le revenu global (sans limite)
+        // - Cotisations SSI obligatoires (~35% des bénéfices) à la place des PS
+        // - Exonération plus-value après 5 ans si recettes < 90 000€
+        const valeurAmortissable2 = prixAchat * 0.85;
+        const amortBien2     = valeurAmortissable2 * 0.03;
+        const amortTravaux2  = travaux * 0.10;
+        const amortMobilier2 = amortAmbl;
+        const amortTotal2    = amortBien2 + amortTravaux2 + amortMobilier2;
+        const chargesDeductiblesLMP = charges + interets + amortTotal2;
+        baseImp = Math.max(0, loyerNet - chargesDeductiblesLMP);
+        impot = baseImp * (tmi/100);
+        // SSI au lieu de PS (~35% des bénéfices nets, mais min ~1 200€/an si activité)
+        ps = baseImp * 0.35; // Cotisations SSI estimées à 35% (TNS régime général)
+        noteFisc = `BIC pro. Amortissements : ${fmt(amortTotal2)} €/an. Cotisations SSI ~35% des bénéfices. Déficits imputables sur revenu global.`;
+
+      } else {
+        // ── SCI À L'IS ───────────────────────────────────────────────────────
+        // IS calculé sur : loyers - charges - INTÉRÊTS SEULEMENT (pas le capital)
+        // - pas les mensualités entières, seulement la part intérêts
+        // Amortissement du bien possible à l'IS aussi (~3%/an hors terrain)
+        const valeurAmortissableIS = prixAchat * 0.85;
+        const amortIS = valeurAmortissableIS * 0.03 + travaux * 0.10;
+        const beneficeIS = Math.max(0, loyerNet - charges - interets - amortIS);
+        // IS progressif : 15% jusqu'à 42 500€, 25% au-delà
+        const is1 = Math.min(beneficeIS, 42500) * 0.15;
+        const is2 = Math.max(0, beneficeIS - 42500) * 0.25;
+        impot = is1 + is2;
+        baseImp = beneficeIS;
+        ps = 0; // Pas de PS à l'IS (mais flat tax 30% sur dividendes si distribution)
+        noteFisc = `IS sur bénéfice net après amortissements (${fmt(amortIS)} €/an) et intérêts. 15% <42 500€, 25% au-delà. Attention : dividendes soumis à flat tax 30% si distribution.`;
+      }
+      const cfNet = cfBrut-impot-ps;
+      const rBrute= invTotal>0?(loyerBrut/invTotal)*100:0;
+      const rNette= invTotal>0?((loyerNet-charges)/invTotal)*100:0;
+      const rNN   = invTotal>0?((loyerNet-charges-impot-ps)/invTotal)*100:0;
+      const rCap  = apport>0?(cfNet/apport)*100:0;
+
+      // ── Valorisation (doit être avant TRI) ───────────────────────────────────
+      const zd      = ZONES[region];
+      const tauxV   = zd.taux*(COEFF[typeBien]||1)/100;
+      const valBase = prixAchat+travaux+budAmblTot;
+      const valFut  = valBase*Math.pow(1+tauxV,horizon);
+      const pxRev   = invTotal;
+      const pvBrute = valFut-pxRev;
+      const abIR    = horizon<6?0:horizon>=22?1:(horizon-5)*0.06;
+      const abPS    = horizon<6?0:horizon>=30?1:horizon<22?(horizon-5)*0.0165:0.28+(horizon-22)*0.09;
+      const impotPV = Math.max(0,pvBrute)*(1-abIR)*0.19+Math.max(0,pvBrute)*(1-abPS)*0.172;
+      const pvNette = pvBrute-impotPV;
+      const cashRevente = valFut-impotPV;
+
+      // ── TRI (Taux de Rendement Interne) ──────────────────────────────────────
+      // Le TRI mesure le rendement RÉEL de l'apport investi
+      // Flux 0  = -apport (mise de départ)
+      // Flux 1→N-1 = cfNet annuel (loyers - charges - mensualités - impôts)
+      // Flux N  = cfNet + cashNet de revente (prix vente - capital restant dû - impôt PV)
+      const calcTRI = (n) => {
+        if(apport <= 0) return null;
+
+        // Capital restant dû sur le crédit immo après n années
+        const tauxM = (tauxCredit+assurCredit)/100/12;
+        const nMoisTotal = duree*12;
+        const nMoisEcoules = Math.min(n*12, nMoisTotal);
+        // Formule capital restant dû
+        const capitalDu = nMoisEcoules >= nMoisTotal ? 0
+          : emprunImmo * (Math.pow(1+tauxM, nMoisTotal) - Math.pow(1+tauxM, nMoisEcoules))
+            / (Math.pow(1+tauxM, nMoisTotal) - 1);
+
+        // Valeur du bien dans n années (pas horizon global, mais n années)
+        const valBienN = valBase * Math.pow(1+tauxV, n);
+        // Plus-value et impôt sur n années
+        const pvBruteN = Math.max(0, valBienN - pxRev);
+        const abIRn    = n<6?0:n>=22?1:(n-5)*0.06;
+        const abPSn    = n<6?0:n>=30?1:n<22?(n-5)*0.0165:0.28+(n-22)*0.09;
+        const impotPVn = pvBruteN*(1-abIRn)*0.19 + pvBruteN*(1-abPSn)*0.172;
+        // Cash net à la revente = prix vente - capital restant dû - impôt PV
+        const cashNetRevente = valBienN - capitalDu - impotPVn;
+
+        const van = (r) => {
+          if(r <= -1) return Infinity;
+          let v = -apport;
+          for(let t=1; t<=n; t++) {
+            const flux = t===n ? cfNet + cashNetRevente : cfNet;
+            v += flux / Math.pow(1+r, t);
+          }
+          return v;
+        };
+
+        // Bisection entre -99% et +99%
+        let lo = -0.99, hi = 0.99;
+        const vLo = van(lo), vHi = van(hi);
+        if((vLo > 0 && vHi > 0) || (vLo < 0 && vHi < 0)) return null;
+
+        for(let i=0; i<100; i++) {
+          const mid = (lo+hi)/2;
+          if(Math.abs(hi-lo) < 0.000001) {
+            const res = Math.round(mid*1000)/10;
+            return (res > -99 && res < 99) ? res : null;
+          }
+          if(van(mid)*van(lo) <= 0) hi = mid;
+          else lo = mid;
+        }
+        const res = Math.round(((lo+hi)/2)*1000)/10;
+        return (res > -99 && res < 99) ? res : null;
+      };
+
+      const tri10 = calcTRI(10);
+      const tri20 = calcTRI(20);
+
+      // ── COMPARAISON DES 4 RÉGIMES ─────────────────────────────────────────────
+      const calcRegime = (r) => {
+        let imp=0, pss=0;
+        const interetsR = interets;
+        if(r==="nu"){
+          const base = Math.max(0, loyerNet - taxeFonc - copro - pno - gli - entretien - cpt - gestionLoc - cfe - fraisPub - autres - interetsR);
+          imp = base*(tmi/100); pss = base*0.172;
+        } else if(r==="meuble_np"){
+          const amort = prixAchat*0.85*0.03 + travaux*0.10 + amortAmbl;
+          const base  = Math.max(0, loyerNet - charges - interetsR - amort);
+          imp = base*(tmi/100); pss = base*0.172;
+        } else if(r==="meuble_pro"){
+          const amort = prixAchat*0.85*0.03 + travaux*0.10 + amortAmbl;
+          const base  = Math.max(0, loyerNet - charges - interetsR - amort);
+          imp = base*(tmi/100); pss = base*0.35;
+        } else {
+          const amort  = prixAchat*0.85*0.03 + travaux*0.10;
+          const benef  = Math.max(0, loyerNet - charges - interetsR - amort);
+          imp = Math.min(benef,42500)*0.15 + Math.max(0,benef-42500)*0.25;
+        }
+        const cf = cfBrut - imp - pss;
+        const rn = invTotal>0?((loyerNet-charges)/invTotal)*100:0;
+        const rnn= invTotal>0?((loyerNet-charges-imp-pss)/invTotal)*100:0;
+        return { regime:r, label:REGIME_INFO[r].label, cfMensuel:cf/12, rNette:rn, rNN:rnn, impotAnnuel:imp+pss };
+      };
+      const comparRegimes = ["nu","meuble_np","meuble_pro","sci_is"].map(calcRegime);
+      const bestRegime = comparRegimes.reduce((a,b) => b.rNN > a.rNN ? b : a);
+
+      // ── PROJECTION 20 ANS ─────────────────────────────────────────────────────
+      const IRL = 0.02;       // Revalorisation loyers ~2%/an (IRL moyen)
+      const INFLATION = 0.015; // Inflation charges ~1,5%/an
+      const projection20 = Array.from({length:21}, (_,an) => {
+        if(an===0) return { an, loyer:loyerNet, charges, cfNet, patrimoine:0, capitalRembourse:0 };
+        const loyerAn   = loyerNet * Math.pow(1+IRL, an);
+        const chargesAn = charges  * Math.pow(1+INFLATION, an);
+        const tauxM     = (tauxCredit+assurCredit)/100/12;
+        const nMoisT    = duree*12;
+        const nMoisE    = Math.min(an*12, nMoisT);
+        const capitalDuAn = nMoisE >= nMoisT ? 0
+          : emprunImmo*(Math.pow(1+tauxM,nMoisT)-Math.pow(1+tauxM,nMoisE))/(Math.pow(1+tauxM,nMoisT)-1);
+        const capRembourse = emprunImmo - capitalDuAn;
+        // Impôt simplifié (on garde le même régime)
+        const cfBrutAn  = loyerAn - chargesAn - annuite;
+        const cfNetAn   = cfBrutAn - (impot+ps) * Math.pow(1+INFLATION, an);
+        // Valeur bien à l'année n
+        const valBienAn = valBase * Math.pow(1+tauxV, an);
+        // Patrimoine net = valeur bien - capital restant dû
+        const patrimoineAn = valBienAn - capitalDuAn;
+        return { an, loyer:loyerAn, charges:chargesAn, cfNet:cfNetAn, patrimoine:patrimoineAn, capitalRembourse:capRembourse, valBien:valBienAn };
+      }).slice(1); // Enlève l'année 0
+
+      let verdict;
+      if(rNette>=8)      verdict={emoji:"🚀",label:"Excellent",   color:"#40916C",desc:"Rentabilité nette >8% — très rare, fortement recommandé.",   tips:["Vérifiez qualité locataire et quartier","Optimisez via LMNP"]};
+      else if(rNette>=5) verdict={emoji:"✅",label:"Bon invest.",  color:"#E8C050",desc:"Rentabilité correcte à bonne selon le marché local.",          tips:["Négociez le prix d'achat","Optimisez le régime fiscal",cfNet<0?"⚠️ Cash-flow négatif":"Cash-flow positif 👍"]};
+      else if(rNette>=3) verdict={emoji:"⚠️",label:"Moyen",       color:"#A07830",desc:"Rentabilité faible — envisageable en zone tendue.",            tips:["Négociez fortement le prix","Envisagez la location meublée"]};
+      else               verdict={emoji:"❌",label:"Peu rentable", color:"#C0392B",desc:"Rentabilité insuffisante au regard des risques.",               tips:["Renégociez le prix à la baisse","Augmentez le loyer si possible","Changez de régime fiscal"]};
+
+      const ri = REGIME_INFO[regime];
+      const zL = PRIX_M2_LOCATIF[zoneLoyer];
+
+      return (
+        <div style={{ background:"#0A0A0A", paddingBottom:40 }}>
+
+          {/* Modal LMNP */}
+          {showLMNP && (
+            <div style={{ position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.85)",zIndex:1000,display:"flex",alignItems:"flex-end",justifyContent:"center" }} onClick={()=>setShowLMNP(false)}>
+              <div style={{ background:"#111",borderRadius:"16px 16px 0 0",padding:"20px 20px 30px",maxWidth:600,width:"100%",maxHeight:"80vh",overflowY:"auto",border:"1px solid #2C2C2C",borderBottom:"none" }} onClick={e=>e.stopPropagation()}>
+                <div style={{ height:3,width:40,background:"#2C2C2C",borderRadius:99,margin:"0 auto 16px" }}></div>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"#E8C050" }}>Liste légale LMNP</div>
+                    <div style={{ fontSize:10,color:"#FFFFFF",letterSpacing:"1px",textTransform:"uppercase",marginTop:2 }}>Décret n°2015-981 du 31 juillet 2015</div>
+                  </div>
+                  <button onClick={()=>setShowLMNP(false)} style={{ background:"#1A1A1A",border:"1px solid #2C2C2C",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"#FFFFFF",fontFamily:"inherit" }}>✕</button>
+                </div>
+                <div style={{ height:1,background:"linear-gradient(90deg,transparent,#E8C050,transparent)",marginBottom:14 }}></div>
+                {LMNP_LIST.map((it,i)=>(
+                  <div key={i} style={{ display:"flex",alignItems:"center",gap:12,padding:"9px 0",borderBottom:"1px solid #1A1A1A" }}>
+                    <span style={{ fontSize:16,flexShrink:0 }}>{it.split(" ")[0]}</span>
+                    <span style={{ fontSize:12,color:"#FFFFFF" }}>{it.substring(it.indexOf(" ")+1)}</span>
+                  </div>
+                ))}
+                <div style={{ marginTop:14,background:"#0F0D00",border:"1px solid #E8C05022",borderRadius:8,padding:"10px 12px",fontSize:10,color:"#FFFFFF" }}>◆ Conservez toutes vos factures de mobilier — indispensables pour l'amortissement LMNP.</div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ maxWidth:600,margin:"0 auto",padding:"12px 12px 0" }}>
+
+            {/* Bandeau données live */}
+            {dateMaj ? (
+              <div style={{ background:"#0F0D00", border:"1px solid #E8C05033", borderRadius:8, padding:"8px 14px", marginBottom:12, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <div>
+                  <div style={{ fontSize:9, fontWeight:600, color:"#E8C050", textTransform:"uppercase", letterSpacing:"1.5px" }}>◆ Données du marché à jour</div>
+                  <div style={{ fontSize:10, color:"#FFFFFF", marginTop:2 }}>Mise à jour : {dateMaj}{prochaineMaj ? ` — Prochaine : ${prochaineMaj}` : ""}</div>
+                </div>
+                <span style={{ fontSize:12, color:"#E8C050" }}>◆</span>
+              </div>
+            ) : !loaded ? (
+              <div style={{ background:"#111", border:"1px solid #2C2C2C", borderRadius:8, padding:"8px 14px", marginBottom:12, fontSize:10, color:"#FFFFFF" }}>
+                Chargement des données du marché...
+              </div>
+            ) : (
+              <div style={{ background:"#111", border:"1px solid #E8C05033", borderRadius:8, padding:"8px 14px", marginBottom:12, fontSize:10, color:"#FFFFFF" }}>
+                ◆ Données hors ligne — taux par défaut utilisés
+              </div>
+            )}
+
+            {/* Badge régime */}
+            <div style={{ background:"#111", border:"1px solid #2C2C2C", borderLeft:"3px solid #C9A84C", borderRadius:8, padding:"12px 16px", marginBottom:12 }}>
+              <div style={{ fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:"1.5px",color:"#FFFFFF" }}>Régime fiscal actif</div>
+              <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,margin:"3px 0",color:"#E8C050" }}>{ri.label}</div>
+              <div style={{ fontSize:10,opacity:0.85,marginBottom:7 }}>{ri.description}</div>
+              <div style={{ display:"flex",flexWrap:"wrap",gap:4 }}>{ri.regimes.map(r=><span key={r} style={{ background:"rgba(255,255,255,0.2)",borderRadius:99,padding:"2px 8px",fontSize:9,fontWeight:600 }}>{r}</span>)}</div>
+            </div>
+
+            {/* RÉGIME */}
+            <Sec title="Régime fiscal & situation" icon="⚖️" color="#BBBBBB" defaultOpen={true}>
+              <div style={{ marginBottom:12 }}>
+                <label style={{ display:"block",fontSize:12,fontWeight:600,color:"#FFFFFF",marginBottom:7 }}>Régime fiscal</label>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:7 }}>
+                  {[{v:"nu",l:"Location Nue",i:"📄"},{v:"meuble_np",l:"LMNP",i:"🛋️"},{v:"meuble_pro",l:"LMP (pro)",i:"🏢"},{v:"sci_is",l:"SCI à l'IS",i:"🏦"}].map(({v,l,i})=>(
+                    <button key={v} onClick={()=>setRegime(v)} style={{ background:regime===v?REGIME_INFO[v].color:"#111111",border:`2px solid ${regime===v?REGIME_INFO[v].color:"#2C2C2C"}`,borderRadius:11,padding:"9px 7px",cursor:"pointer",fontFamily:"inherit",textAlign:"center" }}>
+                      <div style={{ fontSize:17,marginBottom:2 }}>{i}</div>
+                      <div style={{ fontSize:10,fontWeight:700,color:regime===v?"#fff":"#BBBBBB" }}>{l}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <F label="Votre TMI" value={tmi} onChange={setTmi} options={[{value:0,label:"0%"},{value:11,label:"11%"},{value:30,label:"30%"},{value:41,label:"41%"},{value:45,label:"45%"}]} tooltip="Taux marginal d'imposition" />
+              <F label="Revenus annuels du foyer" value={revFoyer} onChange={setRevFoyer} suffix="€" />
+            </Sec>
+
+            {/* BIEN */}
+            <Sec title="Le bien immobilier" icon="🏠" color="#E8C050">
+              <div style={{ marginBottom:12 }}>
+                <label style={{ display:"block",fontSize:12,fontWeight:600,color:"#FFFFFF",marginBottom:7 }}>Type de bien</label>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7 }}>
+                  {[{v:"appartement",l:"Appart. ancien",i:"🏢"},{v:"maison",l:"Maison ancienne",i:"🏡"},{v:"immeuble",l:"Immeuble rapport",i:"🏗️"},{v:"neuf",l:"Bien neuf",i:"✨"},{v:"commercial",l:"Local/Bureau",i:"🏪"},{v:"garage",l:"Garage/Parking",i:"🅿️"}].map(({v,l,i})=>(
+                    <button key={v} onClick={()=>setTypeBien(v)} style={{ background:typeBien===v?"#E8C050":"#111111",border:`2px solid ${typeBien===v?"#E8C050":"#2C2C2C"}`,borderRadius:11,padding:"9px 5px",cursor:"pointer",fontFamily:"inherit",textAlign:"center" }}>
+                      <div style={{ fontSize:19,marginBottom:2 }}>{i}</div>
+                      <div style={{ fontSize:9,fontWeight:700,color:typeBien===v?"#fff":"#BBBBBB",lineHeight:1.3 }}>{l}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <F label="Prix d'achat" value={prixAchat} onChange={setPrixAchat} suffix="€" step={5000} />
+              <F label="Surface habitable" value={surface} onChange={setSurface} suffix="m²" />
+              <div style={{ background:"#0F0D00",borderRadius:9,padding:"7px 11px",fontSize:11,color:"#E8C050",marginBottom:11 }}>💡 Prix au m² : <strong>{surface>0?fmt(prixAchat/surface):0} €/m²</strong></div>
+              <F label="Zone géographique" value={ville} onChange={handleVille} options={[{value:"paris",label:"Paris / Île-de-France"},{value:"grande_ville",label:"Grande ville (Lyon, Bordeaux…)"},{value:"province",label:"Province / Ville moyenne"},{value:"rural",label:"Rural / Petite ville"}]} />
+            </Sec>
+
+            {/* FRAIS */}
+            <Sec title="Frais d'acquisition" icon="📋" color="#A07830">
+              <F label="Frais de notaire" value={fraisNot} onChange={setFraisNot} suffix="%" step={0.5} sublabel="Ancien : 7–8,5% | Neuf : 2–3%" />
+              <div style={{ background:"#0F0A1A",borderRadius:9,padding:"7px 11px",fontSize:11,color:"#A07830",marginBottom:11 }}>Frais estimés : <strong>{fmtE(fraisNotE)}</strong></div>
+              <F label="Commission agence" value={agence} onChange={setAgence} suffix="€" step={500} sublabel="0 si vente entre particuliers" />
+              <F label="Budget travaux" value={travaux} onChange={setTravaux} suffix="€" step={500} sublabel="Utilisez l'estimateur ci-dessous" />
+              <div style={{ background:"#0F0A1A",borderRadius:9,padding:"7px 11px",fontSize:11,color:"#A07830" }}>Investissement total : <strong>{fmtE(invTotal)}</strong></div>
+            </Sec>
+
+            {/* ESTIMATEUR TRAVAUX */}
+            <Sec title="Estimateur de travaux (visite)" icon="🔨" color="#A07830">
+              <div style={{ background:"#0F0D00",border:"1px solid #E8C05044",borderRadius:9,padding:"9px 11px",fontSize:11,color:"#E8C050",marginBottom:12 }}>
+                💡 Cochez les travaux constatés lors de votre visite. Le total se reporte en un clic.
+              </div>
+              <div style={{ marginBottom:14 }}>
+                <div style={{ fontSize:12,fontWeight:700,color:"#FFFFFF",marginBottom:7 }}>Niveau global de rénovation</div>
+                {Object.entries(NIVEAUX).map(([k,n])=>(
+                  <button key={k} onClick={()=>setNiveauReno(k)} style={{ width:"100%",display:"flex",justifyContent:"space-between",alignItems:"center",background:niveauReno===k?n.color:"#111111",border:`2px solid ${niveauReno===k?n.color:"#2C2C2C"}`,borderRadius:9,padding:"8px 11px",cursor:"pointer",fontFamily:"inherit",marginBottom:5,textAlign:"left" }}>
+                    <div>
+                      <div style={{ fontSize:11,fontWeight:700,color:niveauReno===k?"#fff":"#F5F0E8" }}>{n.label}</div>
+                      <div style={{ fontSize:9,color:niveauReno===k?"rgba(255,255,255,0.85)":"#888888" }}>{n.desc}</div>
+                    </div>
+                    {n.max>0&&<div style={{ fontSize:10,fontWeight:800,color:niveauReno===k?"#fff":n.color,flexShrink:0,marginLeft:7 }}>{n.min}–{n.max} €/m²</div>}
+                  </button>
+                ))}
+                {niveauReno&&niveauReno!=="rien"&&(
+                  <div style={{ background:"#111",borderRadius:9,padding:"9px 11px",marginTop:5 }}>
+                    <div style={{ fontSize:10,color:"#FFFFFF",fontWeight:600 }}>Pour {surface} m²</div>
+                    <div style={{ fontSize:16,fontWeight:800,color:"#E8C050" }}>{fmtE(surface*NIVEAUX[niveauReno].min)} – {fmtE(surface*NIVEAUX[niveauReno].max)}</div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ fontSize:12,fontWeight:700,color:"#FFFFFF",marginBottom:3 }}>Postes spécifiques</div>
+              {/* Indicateur zone prix */}
+              <div style={{ background:"#0F0D00",border:"1px solid #E8C05033",borderRadius:7,padding:"7px 11px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                <div style={{ fontSize:9,color:"#E8C050",letterSpacing:"1px",textTransform:"uppercase" }}>
+                  ◆ Prix ajustés pour : <strong>{PRIX_M2_LOCATIF[zoneLoyer]?.label || "Province"}</strong>
+                </div>
+                <div style={{ fontSize:9,color:"#FFFFFF" }}>
+                  Coeff. {coeffZone >= 1 ? "+" : ""}{Math.round((coeffZone-1)*100)}%
+                </div>
+              </div>
+              <div style={{ background:"#0F0D00",border:"1px solid #E8C05044",borderRadius:9,padding:"8px 11px",fontSize:10,color:"#E8C050",marginBottom:11 }}>
+                Tranche basse et haute affichées — <strong>valeur moyenne retenue auto</strong>. Modifiez selon votre devis.
+              </div>
+
+              {POSTES.map(p=>{
+                const act=actifs[p.id]||false;
+                const bas=getMin(p);
+                const hau=getMax(p);
+                const moy=getMoy(p);
+                const ret=montants[p.id]!==undefined?montants[p.id]:moy;
+                return (
+                  <div key={p.id} style={{ marginBottom:8 }}>
+                    <div style={{ display:"flex",gap:7,alignItems:"flex-start",padding:"9px 11px",background:act?"#0F0D00":"#111111",border:`2px solid ${act?"#f59e0b":"#2C2C2C"}`,borderRadius:act?"9px 9px 0 0":9,cursor:"pointer" }}
+                      onClick={()=>setActifs(prev=>({...prev,[p.id]:!prev[p.id]}))}>
+                      <div style={{ width:18,height:18,borderRadius:4,border:`2px solid ${act?"#f59e0b":"#d1d5db"}`,background:act?"#f59e0b":"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:1 }}>
+                        {act&&<span style={{ color:"#fff",fontSize:10,fontWeight:900,lineHeight:1 }}>✓</span>}
+                      </div>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:11,fontWeight:700,color:"#FFFFFF" }}>{p.icone} {p.label}</div>
+                        <div style={{ fontSize:9,color:"#FFFFFF",marginTop:1 }}>{p.desc}</div>
+                        <div style={{ display:"flex",gap:4,marginTop:5,flexWrap:"wrap" }}>
+                          <span style={{ background:"#0F0D00",borderRadius:5,padding:"1px 6px",fontSize:9,fontWeight:700,color:"#E8C050" }}>📉 {fmt(bas)} €{p.u?` (${p.min} ${p.u})`:""}</span>
+                          <span style={{ background:"#1A0000",borderRadius:5,padding:"1px 6px",fontSize:9,fontWeight:700,color:"#C0392B" }}>📈 {fmt(hau)} €{p.u?` (${p.max} ${p.u})`:""}</span>
+                          <span style={{ background:act?"#fef3c7":"#1A1A1A",borderRadius:5,padding:"1px 6px",fontSize:9,fontWeight:700,color:act?"#A07830":"#555555" }}>⚖️ {fmt(act?ret:moy)} €</span>
+                        </div>
+                      </div>
+                    </div>
+                    {act&&(
+                      <div style={{ background:"#fff8ed",border:"1px solid #C9A84C",borderTop:"none",borderRadius:"0 0 9px 9px",padding:"9px 11px" }}>
+                        <div style={{ fontSize:10,color:"#E8C050",marginBottom:6 }}>Moy. auto : <strong>{fmt(moy)} €</strong> — modifiez selon devis :</div>
+                        <div style={{ display:"flex",alignItems:"center",gap:6,flexWrap:"wrap" }}>
+                          <input type="text" inputMode="numeric" value={montants[p.id]!==undefined?montants[p.id]:moy}
+                            onFocus={e=>{e.stopPropagation();e.target.select();}}
+                            onChange={e=>{e.stopPropagation();const n=parseFloat(e.target.value);setMontants(prev=>({...prev,[p.id]:isNaN(n)?moy:n}));}}
+                            onClick={e=>e.stopPropagation()}
+                            style={{ ...iS,maxWidth:100,border:"1px solid #C9A84C",background:"#111",fontWeight:700,fontSize:13 }} />
+                          <span style={{ fontSize:11,color:"#FFFFFF" }}>€</span>
+                          {[["Bas",bas,"#E8C050"],["Moy",moy,"#f59e0b"],["Haut",hau,"#C0392B"]].map(([l,v,c])=>(
+                            <button key={l} onClick={e=>{e.stopPropagation();setMontants(prev=>({...prev,[p.id]:v}));}}
+                              style={{ background:ret===v?c:"#111111",border:`1.5px solid ${c}`,borderRadius:6,padding:"3px 8px",fontSize:9,fontWeight:700,color:ret===v?"#fff":c,cursor:"pointer",fontFamily:"inherit" }}>
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                        <div style={{ marginTop:6,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                          <span style={{ fontSize:9,color:"#FFFFFF" }}>Montant retenu</span>
+                          <span style={{ fontWeight:900,color:"#E8C050",fontSize:13 }}>{fmt(ret)} €</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              <div style={{ marginTop:12,background:"#A07830",borderRadius:11,padding:"12px 14px",color:"#fff" }}>
+                <div style={{ fontSize:10,fontWeight:700,opacity:0.85,textTransform:"uppercase",marginBottom:4 }}>Total estimé (valeurs moyennes)</div>
+                <div style={{ fontSize:24,fontWeight:900,margin:"3px 0" }}>{fmtE(totalTrax)}</div>
+                {niveauReno&&niveauReno!=="rien"&&(
+                  <div style={{ display:"flex",gap:6,marginBottom:5,flexWrap:"wrap" }}>
+                    <span style={{ background:"rgba(255,255,255,0.15)",borderRadius:5,padding:"1px 7px",fontSize:9,fontWeight:700 }}>Basse : {fmtE(surface*NIVEAUX[niveauReno].min)}</span>
+                    <span style={{ background:"rgba(255,255,255,0.25)",borderRadius:5,padding:"1px 7px",fontSize:9,fontWeight:700 }}>Haute : {fmtE(surface*NIVEAUX[niveauReno].max)}</span>
+                  </div>
+                )}
+                <button onClick={()=>setTravaux(totalTrax)} style={{ background:"rgba(255,255,255,0.2)",border:"1.5px solid rgba(255,255,255,0.5)",borderRadius:7,padding:"7px 13px",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>
+                  ✅ Reporter dans le budget travaux
+                </button>
+              </div>
+            </Sec>
+
+            {/* AMEUBLEMENT */}
+            <Sec title={estMeuble?"Ameublement (obligatoire LMNP/LMP)":"Ameublement (optionnel)"} icon="🛋️" color={estMeuble?"#40916C":"#888888"}>
+              {estMeuble&&(
+                <div style={{ background:"#0A1A0F",border:"1px solid #2D5A3D",borderRadius:9,padding:"8px 11px",fontSize:10,color:"#40916C",marginBottom:11,display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <span>Décret n°2015-981 — liste minimale obligatoire. Mobilier amortissable sur 5–7 ans.</span>
+                  <button onClick={()=>setShowLMNP(true)} style={{ background:"#40916C",border:"none",borderRadius:7,padding:"4px 9px",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",flexShrink:0,marginLeft:7 }}>Voir liste *</button>
+                </div>
+              )}
+              <F label="Type de logement" value={typeLog} onChange={setTypeLog} options={Object.entries(AMBL).map(([k,v])=>({value:k,label:`${v.icone} ${v.label}`}))} />
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:12,fontWeight:700,color:"#FFFFFF",marginBottom:7 }}>{ameubl.label} — <span style={{ fontSize:10,fontWeight:400,color:"#EEEEEE" }}>{ameubl.detail}</span></div>
+                <div style={{ display:"flex",gap:7 }}>
+                  {[{k:"eco",l:"Économique",d:"IKEA, occasion",c:"#E8C050"},{k:"standard",l:"Standard",d:"Bon Q/P",c:"#40916C"},{k:"premium",l:"Premium",d:"Haut de gamme",c:"#A07830"}].map(({k,l,d,c})=>{
+                    const dd=ameubl[k]; const sel=gamme===k;
+                    return <button key={k} onClick={()=>{setGamme(k);setBudAmeubl(Math.round((dd.min+dd.max)/2));}} style={{ flex:1,background:sel?c:"#111111",border:`2px solid ${sel?c:"#2C2C2C"}`,borderRadius:11,padding:"9px 5px",cursor:"pointer",textAlign:"center",fontFamily:"inherit" }}>
+                      <div style={{ fontSize:10,fontWeight:700,color:sel?"#fff":"#BBBBBB" }}>{l}</div>
+                      <div style={{ fontSize:12,fontWeight:900,color:sel?"#fff":c,margin:"2px 0" }}>{Math.round(dd.min/1000)}k–{Math.round(dd.max/1000)}k€</div>
+                      <div style={{ fontSize:9,color:sel?"rgba(255,255,255,0.8)":"#555555" }}>{d}</div>
+                    </button>;
+                  })}
+                </div>
+              </div>
+              <F label="Budget ameublement" value={budAmeubl} onChange={setBudAmeubl} suffix="€" step={500} sublabel={`Fourchette : ${fmt(gData.min)} – ${fmt(gData.max)} €`} />
+              <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"9px 11px",background:"#111",borderRadius:9,cursor:"pointer" }} onClick={()=>setInclAmeubl(v=>!v)}>
+                <div style={{ width:19,height:19,borderRadius:5,border:`2px solid ${inclAmeubl?"#40916C":"#d1d5db"}`,background:inclAmeubl?"#40916C":"#fff",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0 }}>{inclAmeubl&&<span style={{ color:"#fff",fontSize:11,fontWeight:900 }}>✓</span>}</div>
+                <div>
+                  <div style={{ fontSize:11,fontWeight:600,color:"#FFFFFF" }}>Intégrer dans l'investissement total</div>
+                  <div style={{ fontSize:9,color:"#EEEEEE" }}>Ajoute le budget + calcule l'amortissement fiscal</div>
+                </div>
+              </div>
+              {inclAmeubl&&budAmeubl>0&&(
+                <div style={{ background:"#0A1A0F",border:"1px solid #2D5A3D",borderRadius:11,padding:"11px 13px" }}>
+                  <div style={{ fontSize:11,fontWeight:700,color:"#40916C",marginBottom:7 }}>Impact fiscal (régime réel LMNP)</div>
+                  {[["Budget",fmtE(budAmeubl)],["Amortissement/an (÷7)",fmtE(amortAmbl)],["Économie impôt/an",fmtE(amortAmbl*(tmi/100))],["Gain fiscal 7 ans",fmtE(amortAmbl*(tmi/100)*7)]].map(([k,v])=>(
+                    <div key={k} style={{ display:"flex",justifyContent:"space-between",fontSize:10,padding:"3px 0",borderBottom:"1px solid #d1fae5" }}>
+                      <span style={{ color:"#FFFFFF" }}>{k}</span><span style={{ fontWeight:700,color:"#40916C" }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Sec>
+
+            {/* FINANCEMENT */}
+            <Sec title="Financement & crédit" icon="🏦" color="#E8C050">
+              <F label="Apport personnel" value={apport} onChange={setApport} suffix="€" step={1000} sublabel="Saisir 0 si financement total à crédit" />
+              <div style={{ background:"#0A1A14",borderRadius:11,padding:"11px 13px",marginBottom:12 }}>
+                <div style={{ fontSize:11,fontWeight:700,color:"#E8C050",marginBottom:7 }}>Répartition</div>
+                {[["Bien + frais + agence",fmtE(baseImmo),"#BBBBBB"],["Apport sur le bien",fmtE(Math.min(apport,baseImmo)),"#40916C"],["→ Crédit immobilier",fmtE(emprunImmo),emprunImmo>0?"#C0392B":"#40916C"],
+                  ...(travaux>0?[["→ Prêt travaux",fmtE(emprunTrax),emprunTrax>0?"#f59e0b":"#40916C"]]:
+                  []),
+                  ...(budAmblTot>0?[["→ Crédit conso",fmtE(emprunAmbl),emprunAmbl>0?"#A07830":"#40916C"]]:
+                  []),
+                ].map(([k,v,c])=>(
+                  <div key={k} style={{ display:"flex",justifyContent:"space-between",fontSize:10,padding:"3px 0",borderBottom:"1px solid #1A1A1A" }}>
+                    <span style={{ color:"#FFFFFF" }}>{k}</span><span style={{ fontWeight:700,color:c }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ background:"#0A1A14",border:"2px solid #99f6e4",borderRadius:11,padding:"11px 13px",marginBottom:11 }}>
+                <div style={{ fontSize:12,fontWeight:800,color:"#E8C050",marginBottom:7 }}>🏦 Crédit immobilier</div>
+                <div style={{ background:"#e0f2fe",borderRadius:7,padding:"6px 9px",fontSize:10,color:"#0369a1",marginBottom:9 }}>ℹ️ Taux le plus bas — bien = garantie. Durée 15–25 ans.</div>
+                <F label="Taux (hors assurance)" value={tauxCredit} onChange={setTauxCredit} suffix="%" step={0.05} sublabel="Ajusté automatiquement selon la durée — modifiable manuellement" />
+                <F label="Assurance emprunteur" value={assurCredit} onChange={setAssurCredit} suffix="%" step={0.05} sublabel="0,2–0,4% selon profil" />
+                <F label="Durée" value={duree} onChange={handleDureeChange} suffix="ans" step={1} />
+                {/* Grille des taux par durée */}
+                <div style={{ background:"#e0f2fe", borderRadius:8, padding:"8px 10px", fontSize:10, color:"#0369a1", marginBottom:8 }}>
+                  <div style={{ fontWeight:700, marginBottom:4 }}>📊 Taux du marché selon la durée (avril 2025)</div>
+                  <div style={{ display:"flex", gap:6 }}>
+                    {[[10,"3,20%"],[15,"3,40%"],[20,"3,65%"],[25,"3,85%"]].map(([d,t])=>(
+                      <div key={d} style={{ flex:1, textAlign:"center", background: duree===d ? "#0369a1" : "rgba(255,255,255,0.6)", borderRadius:6, padding:"3px 4px", cursor:"pointer" }}
+                        onClick={()=>handleDureeChange(d)}>
+                        <div style={{ fontSize:9, color: duree===d ? "#fff" : "#0369a1", fontWeight:600 }}>{d} ans</div>
+                        <div style={{ fontSize:11, fontWeight:800, color: duree===d ? "#fff" : "#0c4a6e" }}>{t}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop:4, fontSize:9, opacity:0.8 }}>Tapez sur une durée pour l'appliquer automatiquement</div>
+                </div>
+                <div style={{ display:"flex",justifyContent:"space-between",fontSize:11,padding:"5px 0" }}>
+                  <span style={{ color:"#FFFFFF" }}>Mensualité crédit immo</span>
+                  <span style={{ fontWeight:800,color:"#E8C050" }}>{fmtE(mensImmo)} / mois</span>
+                </div>
+              </div>
+
+              {travaux>0&&(
+                <div style={{ background:"#0F0D00",border:"2px solid #fde68a",borderRadius:11,padding:"11px 13px",marginBottom:11 }}>
+                  <div style={{ fontSize:12,fontWeight:800,color:"#E8C050",marginBottom:7 }}>🔧 Prêt travaux</div>
+                  <div style={{ background:"#fef3c7",borderRadius:7,padding:"6px 9px",fontSize:10,color:"#E8C050",marginBottom:9 }}>ℹ️ Taux plus élevé (5–8%), durée 7–10 ans max.</div>
+                  {emprunTrax>0?(<>
+                    <F label="Taux" value={tauxTrax} onChange={setTauxTrax} suffix="%" step={0.1} sublabel="5–8% selon organisme" />
+                    <F label="Durée" value={dureeTrax} onChange={setDureeTrax} suffix="ans" step={1} sublabel="7–10 ans max" />
+                    <div style={{ display:"flex",justifyContent:"space-between",fontSize:11,padding:"5px 0" }}>
+                      <span style={{ color:"#FFFFFF" }}>Mensualité travaux</span><span style={{ fontWeight:800,color:"#E8C050" }}>{fmtE(mensTrax)} / mois</span>
+                    </div>
+                  </>):(<div style={{ fontSize:10,color:"#40916C",fontWeight:600 }}>✅ Travaux couverts par votre apport</div>)}
+                </div>
+              )}
+
+              {budAmblTot>0&&(
+                <div style={{ background:"#0F0A1A",border:"2px solid #ddd6fe",borderRadius:11,padding:"11px 13px",marginBottom:11 }}>
+                  <div style={{ fontSize:12,fontWeight:800,color:"#A07830",marginBottom:7 }}>🛋️ Crédit conso (ameublement)</div>
+                  <div style={{ background:"#ede9fe",borderRadius:7,padding:"6px 9px",fontSize:10,color:"#5b21b6",marginBottom:9 }}>ℹ️ Ne peut pas être dans le crédit immo. Durée 3–5 ans.</div>
+                  {emprunAmbl>0?(<>
+                    <F label="Taux" value={tauxAmbl} onChange={setTauxAmbl} suffix="%" step={0.1} sublabel="4–8%" />
+                    <F label="Durée" value={dureeAmbl} onChange={setDureeAmbl} suffix="ans" step={1} sublabel="3–5 ans" />
+                    <div style={{ display:"flex",justifyContent:"space-between",fontSize:11,padding:"5px 0" }}>
+                      <span style={{ color:"#FFFFFF" }}>Mensualité conso</span><span style={{ fontWeight:800,color:"#A07830" }}>{fmtE(mensAmbl)} / mois</span>
+                    </div>
+                  </>):(<div style={{ fontSize:10,color:"#40916C",fontWeight:600 }}>✅ Ameublement couvert par votre apport</div>)}
+                </div>
+              )}
+
+              <div style={{ background:"#0F0D00",borderRadius:11,padding:"11px 13px",color:"#fff" }}>
+                <div style={{ fontSize:11,fontWeight:700,opacity:0.85 }}>TOTAL mensualités toutes dettes</div>
+                <div style={{ fontSize:24,fontWeight:900,margin:"3px 0" }}>{fmtE(mensTot)} / mois</div>
+                <div style={{ fontSize:10,opacity:0.7 }}>Immo : {fmtE(mensImmo)}{mensTrax>0?` + Travaux : ${fmtE(mensTrax)}`:""}{mensAmbl>0?` + Meuble : ${fmtE(mensAmbl)}`:""}</div>
+              </div>
+            </Sec>
+
+            {/* REVENUS */}
+            <Sec title="Revenus locatifs" icon="💶" color="#E8C050">
+              <div style={{ marginBottom:14 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:7 }}>
+                  <div style={{ fontSize:12,fontWeight:700,color:"#FFFFFF" }}>📊 Prix du m² locatif par zone</div>
+                  <button onClick={e=>{e.stopPropagation();setShowGrille(v=>!v);}} style={{ background:"#E8C050",border:"none",borderRadius:7,padding:"3px 9px",color:"#fff",fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>
+                    {showGrille?"Masquer":"Voir grille"}
+                  </button>
+                </div>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,marginBottom:9 }}>
+                  {Object.entries(PRIX_M2_LOCATIF).map(([k,z])=>(
+                    <button key={k} onClick={()=>setZoneLoyer(k)} style={{ background:zoneLoyer===k?z.color:"#111111",border:`2px solid ${zoneLoyer===k?z.color:"#2C2C2C"}`,borderRadius:9,padding:"6px 7px",cursor:"pointer",fontFamily:"inherit",textAlign:"left" }}>
+                      <div style={{ fontSize:9,fontWeight:700,color:zoneLoyer===k?"#fff":"#BBBBBB",lineHeight:1.3 }}>{z.label}</div>
+                      <div style={{ fontSize:10,fontWeight:900,color:zoneLoyer===k?"rgba(255,255,255,0.9)":z.color,marginTop:1 }}>{z.min}–{z.max} €/m²</div>
+                    </button>
+                  ))}
+                </div>
+
+                {(()=>{
+                  const z=PRIX_M2_LOCATIF[zoneLoyer];
+                  const lBas=Math.round(z.min*surface), lHaut=Math.round(z.max*surface), lMoy=Math.round(z.moy*surface);
+                  return (
+                    <div style={{ background:z.color,borderRadius:11,padding:"11px 13px",color:"#fff",marginBottom:9 }}>
+                      <div style={{ fontSize:11,fontWeight:800,marginBottom:2 }}>{z.label}</div>
+                      <div style={{ fontSize:10,opacity:0.9,marginBottom:9 }}>{z.info}</div>
+                      <div style={{ display:"flex",gap:7,marginBottom:9 }}>
+                        {[[`${z.min} €/m²`,"Bas du marché"],[`${z.moy} €/m²`,"Moyenne"],[`${z.max} €/m²`,"Haut du marché"]].map(([val,lbl],i)=>(
+                          <div key={lbl} style={{ flex:1,background:i===1?"rgba(255,255,255,0.3)":"rgba(255,255,255,0.15)",borderRadius:7,padding:"5px 6px",textAlign:"center",border:i===1?"2px solid rgba(255,255,255,0.5)":"none" }}>
+                            <div style={{ fontSize:8,opacity:0.8,textTransform:"uppercase",marginBottom:1 }}>{lbl}</div>
+                            <div style={{ fontSize:13,fontWeight:900 }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ background:"rgba(255,255,255,0.2)",borderRadius:9,padding:"9px 11px" }}>
+                        <div style={{ fontSize:10,opacity:0.9,marginBottom:5 }}>💡 Pour <strong>{surface} m²</strong> | Meublé : {z.meuble}</div>
+                        <div style={{ display:"flex",gap:7 }}>
+                          {[["Bas",lBas],["Moyen",lMoy],["Haut",lHaut]].map(([lbl,val])=>(
+                            <div key={lbl} style={{ flex:1,textAlign:"center" }}>
+                              <div style={{ fontSize:8,opacity:0.8,textTransform:"uppercase" }}>{lbl}</div>
+                              <div style={{ fontSize:13,fontWeight:800 }}>{val.toLocaleString("fr-FR")} €</div>
+                              <button onClick={()=>setLoyer(val)} style={{ marginTop:3,background:"rgba(255,255,255,0.3)",border:"1px solid rgba(255,255,255,0.5)",borderRadius:5,padding:"2px 5px",color:"#fff",fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit",width:"100%" }}>Utiliser</button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {showGrille&&(
+                  <div style={{ background:"#111",border:"1px solid #2C2C2C",borderRadius:11,padding:"11px 13px",marginBottom:9 }}>
+                    <div style={{ fontSize:11,fontWeight:700,color:"#FFFFFF",marginBottom:5 }}>Grille complète France 2025</div>
+                    {Object.values(PRIX_M2_LOCATIF).map(z=>(
+                      <div key={z.label} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"1px solid #1A1A1A" }}>
+                        <span style={{ fontSize:10,color:"#FFFFFF",flex:1 }}>{z.label}</span>
+                        <div style={{ display:"flex",gap:4,flexShrink:0 }}>
+                          <span style={{ background:"#0F0D00",borderRadius:4,padding:"1px 6px",fontSize:9,fontWeight:700,color:"#E8C050" }}>{z.min}</span>
+                          <span style={{ background:"#0A1A0F",borderRadius:4,padding:"1px 6px",fontSize:9,fontWeight:700,color:"#40916C" }}>{z.moy}</span>
+                          <span style={{ background:"#1A0000",borderRadius:4,padding:"1px 6px",fontSize:9,fontWeight:700,color:"#C0392B" }}>{z.max} €/m²</span>
+                        </div>
+                      </div>
+                    ))}
+                    <div style={{ marginTop:7,fontSize:9,color:"#EEEEEE" }}>⚠️ Prix indicatifs. Paris soumise à l'encadrement des loyers.</div>
+                  </div>
+                )}
+              </div>
+
+              <F label="Loyer mensuel total perçu" value={loyer} onChange={setLoyer} suffix="€" step={10}
+                sublabel="Saisissez le loyer d'UN logement, ou le TOTAL de tous les loyers si vous achetez un immeuble de plusieurs appartements (ex. 4 apparts à 600€ = 2 400€)"
+                tooltip="Pour un immeuble de rapport : additionnez tous les loyers mensuels de l'ensemble des logements" />
+              <F label="Vacance locative" value={vacance} onChange={setVacance} suffix="mois/an" step={0.5} sublabel="Paris 0,5 | Province 1 | Rural 1,5–2 mois" />
+              <div style={{ background:"#0F0D00",borderRadius:9,padding:"7px 11px",fontSize:11,color:"#E8C050" }}>
+                Brut : <strong>{fmtE(loyerBrut)}</strong> | Après {vacance} mois vacance : <strong>{fmtE(loyerNet)}</strong>
+              </div>
+            </Sec>
+
+            {/* CHARGES */}
+            <Sec title="Charges annuelles" icon="📊" color="#E8C050">
+              <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:7 }}>
+                <F label="Taxe foncière" value={taxeFonc} onChange={setTaxeFonc} suffix="€" sublabel="~1–2 mois de loyer" />
+                <F label="Charges copro" value={copro} onChange={setCopro} suffix="€" sublabel="Part non récupérable" />
+                <F label="Assurance PNO" value={pno} onChange={setPno} suffix="€" sublabel="Propriétaire Non Occupant" />
+                <F label="Assur. loyers impayés" value={gli} onChange={setGli} suffix="€" sublabel="GLI : ~3–4% des loyers" />
+                <F label="Entretien / provision" value={entretien} onChange={setEntretien} suffix="€" sublabel="Réparations courantes" />
+                <F label="Frais de publicité" value={fraisPub} onChange={setFraisPub} suffix="€" sublabel="Annonces SeLoger, PAP… ~100–300€/an" tooltip="Déductible au réel — coût des annonces de location" />
+              </div>
+
+              {/* Gestion locative */}
+              <div style={{ background:"#0A0A0A",border:"1px solid #2C2C2C",borderLeft:`2px solid ${OR}`,borderRadius:7,padding:"10px 12px",marginBottom:10 }}>
+                <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"1.5px",color:OR,marginBottom:6 }}>Gestion locative (agence)</div>
+                <div style={{ fontSize:10,color:"#FFFFFF",marginBottom:8 }}>Si vous confiez la gestion à une agence. Saisissez le montant annuel ou calculez depuis le % des loyers.</div>
+                <div style={{ display:"flex",gap:8,alignItems:"flex-end" }}>
+                  <div style={{ flex:1 }}><F label="Montant annuel" value={gestionLoc} onChange={setGestionLoc} suffix="€" sublabel="~6–10% des loyers perçus" tooltip="Honoraires agence : recherche locataire, état des lieux, gestion courante" /></div>
+                  <button onClick={()=>setGestionLoc(Math.round(loyerNet*0.08))}
+                    style={{ background:"#1A1A1A",border:`1px solid ${N5}`,borderRadius:6,padding:"6px 10px",color:OR,fontSize:9,fontWeight:600,letterSpacing:"1px",textTransform:"uppercase",cursor:"pointer",fontFamily:"inherit",marginBottom:12,whiteSpace:"nowrap" }}>
+                    8% auto
+                  </button>
+                </div>
+              </div>
+
+              {/* CFE */}
+              <div style={{ background:"#0A0A0A",border:"1px solid #2C2C2C",borderLeft:`2px solid ${OR}`,borderRadius:7,padding:"10px 12px",marginBottom:10 }}>
+                <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"1.5px",color:OR,marginBottom:4 }}>CFE — Cotisation Foncière des Entreprises</div>
+                <div style={{ fontSize:10,color:"#FFFFFF",marginBottom:8 }}>Obligatoire en LMNP et LMP. Varie selon la commune : ~100–500€/an. Exonération la 1ère année d'activité.</div>
+                <F label="Montant CFE annuel" value={cfe} onChange={setCfe} suffix="€" sublabel="0€ si location nue ou SCI IS · ~200€/an en moyenne LMNP" tooltip="Impôt local obligatoire pour tout loueur en meublé (LMNP/LMP). Déductible du résultat." />
+              </div>
+              <div style={{ background:"#111",border:"1px solid #2C2C2C",borderRadius:11,padding:"11px 13px",marginBottom:11 }}>
+                <div style={{ fontSize:12,fontWeight:700,color:"#FFFFFF",marginBottom:3 }}>🧾 Expert-comptable</div>
+                <div style={{ fontSize:10,color:"#FFFFFF",marginBottom:9 }}>Tarif par logement/lot par an (~250€). Appuyez + ou − pour ajuster.</div>
+                <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:7 }}>
+                  <div>
+                    <label style={{ display:"block",fontSize:11,fontWeight:600,color:"#FFFFFF",marginBottom:3 }}>Nombre de lots</label>
+                    <div style={{ display:"flex",alignItems:"center",gap:6 }}>
+                      <button onClick={()=>setNbLots(n=>Math.max(1,n-1))} style={{ width:30,height:30,borderRadius:7,border:"1px solid #2C2C2C",background:"#111",fontSize:16,cursor:"pointer",fontFamily:"inherit" }}>−</button>
+                      <div style={{ flex:1,textAlign:"center",fontSize:18,fontWeight:800,color:"#E8C050" }}>{nbLots}</div>
+                      <button onClick={()=>setNbLots(n=>n+1)} style={{ width:30,height:30,borderRadius:7,border:"1px solid #2C2C2C",background:"#111",fontSize:16,cursor:"pointer",fontFamily:"inherit" }}>+</button>
+                    </div>
+                  </div>
+                  <F label="Prix/lot/an" value={prixCpt} onChange={setPrixCpt} suffix="€" step={50} sublabel="~200–350€/logement" />
+                </div>
+                <div style={{ marginTop:9,background:"#0F0D00",borderRadius:7,padding:"7px 10px",display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <span style={{ fontSize:11,color:"#E8C050" }}>Total expert-comptable/an</span>
+                  <span style={{ fontSize:14,fontWeight:800,color:"#E8C050" }}>{fmtE(cpt)}</span>
+                </div>
+              </div>
+              <F label="Autres charges" value={autres} onChange={setAutres} suffix="€" />
+              <div style={{ background:"#1A0A0A",borderRadius:9,padding:"7px 11px",fontSize:11,color:"#E8C050" }}>
+                Total charges : <strong>{fmtE(charges)}</strong> ({fmtE(charges/12)}/mois)
+              </div>
+            </Sec>
+
+            {/* VALORISATION */}
+            <Sec title="Valorisation & plus-value" icon="📈" color="#E8C050">
+              <div style={{ background:"#0F0D00",border:"1px solid #E8C05033",borderRadius:9,padding:"7px 11px",fontSize:10,color:"#E8C050",marginBottom:9 }}>
+                🔗 Zone pré-remplie selon votre zone géo. Affinez ci-dessous si besoin.
+              </div>
+              <F label="Zone d'achat (précise)" value={region} onChange={handleRegion} options={Object.entries(ZONES).map(([k,v])=>({value:k,label:`${v.label} (~${v.taux}%/an)`}))} />
+              <div style={{ background:zd.col,borderRadius:11,padding:"11px 13px",color:"#fff",marginBottom:11 }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:2 }}>
+                  <span style={{ fontWeight:700,fontSize:12 }}>{zd.label}</span>
+                  <span style={{ background:"rgba(255,255,255,0.25)",borderRadius:99,padding:"1px 7px",fontSize:9,fontWeight:700 }}>{zd.tendance==="hausse"?"↗ Hausse":"→ Stable"}</span>
+                </div>
+                <div style={{ fontSize:10,opacity:0.9,marginBottom:5 }}>{zd.ctx}</div>
+                <div style={{ fontSize:9,opacity:0.75 }}>Taux retenu ({typeBien}) : <strong>{(zd.taux*(COEFF[typeBien]||1)).toFixed(1)}%/an</strong> — Notaires de France, INSEE Q1 2025</div>
+              </div>
+
+              <div style={{ background:"#111",border:"1px solid #2C2C2C",borderRadius:9,padding:"9px 11px",marginBottom:11 }}>
+                <div style={{ fontSize:11,fontWeight:700,color:"#FFFFFF",marginBottom:5 }}>Base de valorisation (bien rénové)</div>
+                {[["Prix d'achat",fmtE(prixAchat)],["+ Travaux",fmtE(travaux)],...(budAmblTot>0?[["+ Ameublement",fmtE(budAmblTot)]]:
+                []),["= Valeur rénovée",fmtE(valBase)]].map(([k,v])=>(
+                  <div key={k} style={{ display:"flex",justifyContent:"space-between",fontSize:10,padding:"2px 0",borderBottom:"1px solid #1A1A1A" }}>
+                    <span style={{ color:k.startsWith("=")?"#E8C050":"#888888",fontWeight:k.startsWith("=")?700:400 }}>{k}</span>
+                    <span style={{ fontWeight:k.startsWith("=")?800:600,color:k.startsWith("=")?"#E8C050":"#BBBBBB" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+
+              <F label="Horizon de détention" value={horizon} onChange={setHorizon} suffix="ans" step={1} sublabel="Exonération IR après 22 ans, PS après 30 ans" />
+
+              <div style={{ display:"flex",gap:7,overflowX:"auto",marginBottom:12 }}>
+                {[0,Math.floor(horizon/3),Math.floor(2*horizon/3),horizon].filter((v,i,a)=>a.indexOf(v)===i).map(an=>{
+                  const val=Math.round(valBase*Math.pow(1+tauxV,an)); const last=an===horizon;
+                  return <div key={an} style={{ flex:"0 0 auto",background:last?zd.col:"#111111",border:`2px solid ${last?zd.col:"#2C2C2C"}`,borderRadius:11,padding:"9px 11px",textAlign:"center",minWidth:70 }}>
+                    <div style={{ fontSize:9,color:last?"rgba(255,255,255,0.8)":"#555555",fontWeight:600 }}>An {an}</div>
+                    <div style={{ fontSize:12,fontWeight:800,color:last?"#fff":"#F5F0E8",margin:"2px 0" }}>{Math.round(val/1000)}k€</div>
+                    {an>0&&<div style={{ fontSize:9,color:last?"rgba(255,255,255,0.7)":"#888888" }}>+{Math.round((val-valBase)/1000)}k€</div>}
+                  </div>;
+                })}
+              </div>
+
+              {/* Tableau revente simplifié */}
+              <div style={{ borderRadius:13,overflow:"hidden",border:"1px solid #2C2C2C" }}>
+                <div style={{ background:"#0F0D00",padding:"11px 14px",color:"#fff" }}>
+                  <div style={{ fontSize:12,fontWeight:800 }}>Si vous revendez dans {horizon} ans</div>
+                  <div style={{ fontSize:9,opacity:0.7,marginTop:1 }}>Taux marché {(zd.taux*(COEFF[typeBien]||1)).toFixed(1)}%/an — bien rénové</div>
+                </div>
+                <div style={{ padding:"12px 14px" }}>
+                  {[
+                    ["Valeur du bien aujourd'hui (rénové)", fmtE(valBase), "#BBBBBB", "Prix d'achat + travaux + ameublement"],
+                    ["Valeur estimée dans "+horizon+" ans",  fmtE(valFut),  "#40916C", `Après hausse du marché (${(zd.taux*(COEFF[typeBien]||1)).toFixed(1)}%/an)`],
+                    ["Impôt sur la plus-value"+(horizon>=22?" ✅ Exonéré d'IR":""), "− "+fmtE(impotPV), impotPV>0?"#C0392B":"#40916C", horizon>=22?"Détention >22 ans → aucun IR":"19% IR + 17,2% PS (après abattements)"],
+                  ].map(([k,v,c,sub])=>(
+                    <div key={k} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid #1A1A1A" }}>
+                      <div>
+                        <div style={{ fontSize:11,fontWeight:600,color:"#FFFFFF" }}>{k}</div>
+                        <div style={{ fontSize:9,color:"#EEEEEE" }}>{sub}</div>
+                      </div>
+                      <span style={{ fontSize:13,fontWeight:800,color:c,flexShrink:0,marginLeft:8 }}>{v}</span>
+                    </div>
+                  ))}
+                  <div style={{ marginTop:11,background:pvNette>=0?"#001A0A":"#1A0000",border:`2px solid ${pvNette>=0?"#16a34a":"#C0392B"}`,borderRadius:11,padding:"12px 14px" }}>
+                    <div style={{ fontSize:10,fontWeight:700,color:pvNette>=0?"#166534":"#C0392B",marginBottom:3 }}>💰 Ce qu'il reste une fois vendu et impôts payés</div>
+                    <div style={{ fontSize:26,fontWeight:900,color:pvNette>=0?"#16a34a":"#C0392B" }}>{fmt(cashRevente)} €</div>
+                    <div style={{ fontSize:10,color:"#FFFFFF",marginTop:3 }}>Dont <strong style={{ color:pvNette>=0?"#16a34a":"#C0392B" }}>{pvNette>=0?"+":""}{fmt(pvNette)} €</strong> de plus-value nette vs prix de revient {fmt(pxRev)} €</div>
+                    {horizon>=22&&<div style={{ marginTop:6,background:"#dcfce7",borderRadius:7,padding:"4px 9px",fontSize:10,color:"#40916C",fontWeight:600 }}>✅ &gt;22 ans — Aucun impôt sur la plus-value !</div>}
+                    {horizon>=30&&<div style={{ marginTop:3,background:"#dcfce7",borderRadius:7,padding:"4px 9px",fontSize:10,color:"#40916C",fontWeight:600 }}>✅ &gt;30 ans — Exonération totale des prélèvements sociaux !</div>}
+                  </div>
+                </div>
+              </div>
+            </Sec>
+
+            {/* RÉSULTATS */}
+            <div style={{ background:"#111",border:"1px solid #2C2C2C",borderRadius:14,overflow:"hidden",marginTop:4 }}>
+              {/* Header résultats */}
+              <div style={{ background:"#0A0A0A",padding:"16px 16px 14px",borderBottom:"1px solid #1A1A1A" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:18,fontWeight:600,color:"#FFFFFF",letterSpacing:"0.5px" }}>Résultats</div>
+                    <div style={{ fontSize:9,letterSpacing:"2px",textTransform:"uppercase",color:"#FFFFFF",marginTop:2 }}>Régime : {ri.label}</div>
+                  </div>
+                  <div style={{ fontSize:9,letterSpacing:"1px",color:"#E8C050",textTransform:"uppercase" }}>◈ Simulation</div>
+                </div>
+                <div style={{ height:1,background:"linear-gradient(90deg,transparent,#E8C050,transparent)",marginTop:12 }}></div>
+              </div>
+
+              <div style={{ padding:16 }}>
+                {/* Verdict */}
+                <div style={{ background:"#0A0A0A",border:`1px solid ${verdict.color}44`,borderLeft:`3px solid ${verdict.color}`,borderRadius:8,padding:"12px 14px",marginBottom:16 }}>
+                  <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6 }}>
+                    <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:17,fontWeight:600,color:verdict.color }}>{verdict.label}</div>
+                    <div style={{ fontSize:18 }}>{verdict.emoji}</div>
+                  </div>
+                  <div style={{ fontSize:11,color:"#FFFFFF",lineHeight:1.5,marginBottom:8 }}>{verdict.desc}</div>
+                  <div style={{ borderTop:"1px solid #1A1A1A",paddingTop:8 }}>
+                    <div style={{ fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:"1.5px",color:"#FFFFFF",marginBottom:5 }}>Recommandations</div>
+                    {verdict.tips.map(c=><div key={c} style={{ fontSize:10,color:"#FFFFFF",marginBottom:3 }}>— {c}</div>)}
+                  </div>
+                </div>
+
+                {/* Jauges */}
+                <div style={{ marginBottom:16 }}>
+                  <div style={{ fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:"2px",color:"#FFFFFF",marginBottom:10 }}>◈ Taux de rentabilité</div>
+                  <Gauge value={rBrute} max={12} label="Brute" color="#E8C050" />
+                  <Gauge value={rNette} max={12} label="Nette — après charges" color="#E8C96A" />
+                  <Gauge value={rNN}    max={12} label="Nette-nette — après impôts" color="#A07830" />
+                  <div style={{ fontSize:9,color:"#FFFFFF",marginTop:5,letterSpacing:"0.5px" }}>Brute &gt;6% = bon · Nette &gt;4% = acceptable</div>
+                </div>
+
+                {/* Cash-flow */}
+                <div style={{ background:"#0A0A0A",border:`1px solid ${cfNet>=0?"#40916C44":"#C0392B44"}`,borderLeft:`3px solid ${cfNet>=0?"#40916C":"#C0392B"}`,borderRadius:8,padding:"12px 14px",marginBottom:12 }}>
+                  <div style={{ fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:"2px",color:cfNet>=0?"#40916C":"#C0392B",marginBottom:4 }}>Cash-flow mensuel net</div>
+                  <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:30,fontWeight:700,color:cfNet>=0?"#40916C":"#C0392B" }}>{cfNet>=0?"+":""}{fmtE(cfNet/12)} <span style={{ fontSize:14 }}>/ mois</span></div>
+                  <div style={{ fontSize:10,color:"#FFFFFF",marginTop:3 }}>Soit {fmtE(cfNet)} / an après charges, crédits et impôts</div>
+                  {cfNet<0&&<div style={{ marginTop:5,fontSize:10,color:"#C0392B" }}>— Effort mensuel à prévoir : {fmtE(Math.abs(cfNet/12))}</div>}
+                </div>
+
+                {/* Rendement capital */}
+                <div style={{ background:"#0F0D00",border:"1px solid #E8C05022",borderRadius:8,padding:"10px 13px",marginBottom:10 }}>
+                  <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"2px",color:"#A07830",marginBottom:3 }}>Rendement sur apport</div>
+                  <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:24,fontWeight:700,color:"#E8C050" }}>{rCap.toFixed(1)}<span style={{ fontSize:14 }}>%</span></div>
+                  <div style={{ fontSize:9,color:"#FFFFFF",marginTop:2 }}>Cash-flow net annuel ÷ apport {fmtE(apport)}</div>
+                </div>
+
+                {/* TRI */}
+                <div style={{ background:"#0A0A0A",border:"1px solid #2C2C2C",borderRadius:8,padding:"12px 14px",marginBottom:14 }}>
+                  <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"2px",color:"#E8C050",marginBottom:6 }}>◈ TRI — Taux de Rendement Interne</div>
+                  <div style={{ fontSize:9,color:"#FFFFFF",marginBottom:12,lineHeight:1.5 }}>
+                    Indicateur de performance global : intègre l'apport, tous les cash-flows et la revente nette d'impôts sur la durée choisie.
+                  </div>
+
+                  {apport <= 0 ? (
+                    <div style={{ background:"#111",border:"1px solid #2C2C2C",borderRadius:8,padding:"14px",textAlign:"center" }}>
+                      <div style={{ fontSize:11,color:"#EEEEEE",marginBottom:4 }}>— TRI non applicable —</div>
+                      <div style={{ fontSize:9,color:"#FFFFFF" }}>Le TRI nécessite un apport personnel &gt; 0 €.<br/>Saisissez votre apport dans la section Financement.</div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display:"flex",gap:10 }}>
+                        {[[tri10,"10 ans"],[tri20,"20 ans"]].map(([tri,lbl])=>{
+                          const tauxRef = tauxCredit + assurCredit;
+                          const couleur = tri===null ? "#444"
+                            : tri >= 8             ? "#40916C"   // Excellent
+                            : tri >= 5             ? "#6aab7a"   // Correct
+                            : tri >= tauxRef       ? "#E8C050"   // Au-dessus du crédit
+                            : tri >= 3             ? "#A07830"   // Faible
+                            : tri >= 0             ? "#C0392B"   // Très faible
+                            :                       "#8B0000";   // Négatif
+                          const mention = tri===null ? "Non calculable"
+                            : tri >= 8             ? "★ Excellent"
+                            : tri >= 5             ? "✓ Correct"
+                            : tri >= tauxRef       ? "~ Au-dessus du crédit"
+                            : tri >= 3             ? "▽ Faible"
+                            : tri >= 0             ? "✗ Très faible"
+                            :                       "✗ Négatif";
+                          return (
+                            <div key={lbl} style={{ flex:1,background:"#111",border:`1px solid ${couleur}33`,borderRadius:8,padding:"12px 8px",textAlign:"center" }}>
+                              <div style={{ fontSize:9,color:"#EEEEEE",textTransform:"uppercase",letterSpacing:"1px",marginBottom:8 }}>{lbl}</div>
+                              <div style={{ fontFamily:"'Cormorant Garamond',serif",fontSize:28,fontWeight:700,color:couleur,lineHeight:1 }}>
+                                {tri===null ? "N/D" : `${tri.toFixed(1)}%`}
+                              </div>
+                              <div style={{ fontSize:9,color:couleur,marginTop:6,fontWeight:700,letterSpacing:"0.5px" }}>
+                                {mention}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ marginTop:12,background:"#111",borderRadius:6,padding:"10px 12px" }}>
+                        <div style={{ fontSize:9,color:"#EEEEEE",marginBottom:7,textTransform:"uppercase",letterSpacing:"1px" }}>Grille de lecture</div>
+                        {[
+                          ["#40916C","★ > 8%","Excellent — rare et très recherché"],
+                          ["#6aab7a","✓ 5–8%","Correct — objectif à viser"],
+                          ["#E8C050",`~ ${(tauxCredit+assurCredit).toFixed(1)}–5%`,"Au-dessus du coût du crédit — levier positif"],
+                          ["#A07830","▽ 3–"+( tauxCredit+assurCredit).toFixed(1)+"%","Faible — sous le coût du crédit"],
+                          ["#C0392B","✗ 0–3%","Très faible — livret A fait mieux"],
+                          ["#8B0000","✗ < 0%","Négatif — perte en valeur réelle"],
+                        ].map(([c,lbl,desc])=>(
+                          <div key={lbl} style={{ display:"flex",alignItems:"center",gap:8,marginBottom:4 }}>
+                            <div style={{ width:6,height:6,borderRadius:99,background:c,flexShrink:0 }}></div>
+                            <span style={{ color:c,fontSize:9,fontWeight:700,minWidth:60 }}>{lbl}</span>
+                            <span style={{ color:"#FFFFFF",fontSize:9 }}>{desc}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* ── COMPARAISON DES 4 RÉGIMES ── */}
+                <div style={{ background:"#0A0A0A",border:"1px solid #2C2C2C",borderRadius:8,padding:"12px 14px",marginBottom:14 }}>
+                  <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"2px",color:"#E8C050",marginBottom:4 }}>◈ Comparaison automatique des régimes fiscaux</div>
+                  <div style={{ fontSize:9,color:"#FFFFFF",marginBottom:12 }}>Même bien, mêmes données — quel régime est optimal pour vous ? <span style={{ color:"#E8C050",fontWeight:700 }}>◆ = meilleur</span></div>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%",borderCollapse:"collapse",fontSize:10 }}>
+                      <thead>
+                        <tr style={{ borderBottom:"1px solid #2C2C2C" }}>
+                          <td style={{ padding:"6px 8px",color:"#FFFFFF",fontSize:9,textTransform:"uppercase",letterSpacing:"0.5px" }}>Régime</td>
+                          <td style={{ padding:"6px 8px",color:"#FFFFFF",fontSize:9,textAlign:"right" }}>CF/mois</td>
+                          <td style={{ padding:"6px 8px",color:"#FFFFFF",fontSize:9,textAlign:"right" }}>Renta nette</td>
+                          <td style={{ padding:"6px 8px",color:"#FFFFFF",fontSize:9,textAlign:"right" }}>Après impôts</td>
+                          <td style={{ padding:"6px 8px",color:"#FFFFFF",fontSize:9,textAlign:"right" }}>Impôt/an</td>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {comparRegimes.map(r => {
+                          const isBest = r.regime === bestRegime.regime;
+                          const isCurrent = r.regime === regime;
+                          return (
+                            <tr key={r.regime} style={{ borderBottom:"1px solid #1A1A1A", background:isBest?"#0F0D00":"transparent" }}>
+                              <td style={{ padding:"8px 8px",fontSize:9,fontWeight:isBest?700:400 }}>
+                                {isBest && <span style={{ color:"#E8C050",marginRight:4 }}>◆</span>}
+                                <span style={{ color:isBest?"#E8C050":isCurrent?"#FFFFFF":"#FFFFFF" }}>{r.label}</span>
+                                {isCurrent && <span style={{ marginLeft:4,fontSize:8,color:"#555",background:"#1A1A1A",borderRadius:4,padding:"1px 4px" }}>actuel</span>}
+                              </td>
+                              <td style={{ padding:"8px 8px",textAlign:"right",fontWeight:600,color:r.cfMensuel>=0?"#40916C":"#C0392B",fontSize:10 }}>
+                                {r.cfMensuel>=0?"+":""}{Math.round(r.cfMensuel).toLocaleString("fr-FR")} €
+                              </td>
+                              <td style={{ padding:"8px 8px",textAlign:"right",color:"#FFFFFF",fontSize:10 }}>{r.rNette.toFixed(2)}%</td>
+                              <td style={{ padding:"8px 8px",textAlign:"right",color:isBest?"#E8C050":"#FFFFFF",fontWeight:isBest?700:400,fontSize:10 }}>{r.rNN.toFixed(2)}%</td>
+                              <td style={{ padding:"8px 8px",textAlign:"right",color:"#C0392B",fontSize:10 }}>{Math.round(r.impotAnnuel).toLocaleString("fr-FR")} €</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ marginTop:10,background:"#111",borderRadius:6,padding:"8px 10px",fontSize:9,color:"#FFFFFF" }}>
+                    ◆ Régime optimal : <strong style={{ color:"#E8C050" }}>{bestRegime.label}</strong> — Cash-flow {bestRegime.cfMensuel>=0?"+":""}{Math.round(bestRegime.cfMensuel).toLocaleString("fr-FR")} €/mois · Renta nette-nette {bestRegime.rNN.toFixed(2)}%
+                  </div>
+                </div>
+
+                {/* ── PROJECTION 20 ANS ── */}
+                <div style={{ background:"#0A0A0A",border:"1px solid #2C2C2C",borderRadius:8,padding:"12px 14px",marginBottom:14 }}>
+                  <div style={{ fontSize:9,textTransform:"uppercase",letterSpacing:"2px",color:"#E8C050",marginBottom:4 }}>◈ Projection sur 20 ans</div>
+                  <div style={{ fontSize:9,color:"#FFFFFF",marginBottom:12 }}>
+                    Loyers revalorisés à +{(IRL*100).toFixed(0)}%/an (IRL) · Charges indexées +{(INFLATION*100).toFixed(0)}%/an · Valorisation bien +{(tauxV*100).toFixed(1)}%/an
+                  </div>
+                  <div style={{ overflowX:"auto" }}>
+                    <table style={{ width:"100%",borderCollapse:"collapse",fontSize:9,minWidth:380 }}>
+                      <thead>
+                        <tr style={{ borderBottom:"1px solid #2C2C2C" }}>
+                          {["An","Loyer/mois","CF net/mois","Val. bien","Patrimoine net"].map(h=>(
+                            <td key={h} style={{ padding:"5px 6px",color:"#E8C050",fontSize:8,textTransform:"uppercase",letterSpacing:"0.5px",textAlign:"right",whiteSpace:"nowrap" }}>{h}</td>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {projection20.filter((_,i)=>[0,4,9,14,19].includes(i)).map(p=>(
+                          <tr key={p.an} style={{ borderBottom:"1px solid #1A1A1A", background:p.an===20?"#0F0D00":"transparent" }}>
+                            <td style={{ padding:"6px 6px",color:p.an===20?"#E8C050":"#FFFFFF",fontWeight:p.an===20?700:400 }}>An {p.an}</td>
+                            <td style={{ padding:"6px 6px",textAlign:"right",color:"#FFFFFF" }}>{Math.round(p.loyer/12).toLocaleString("fr-FR")} €</td>
+                            <td style={{ padding:"6px 6px",textAlign:"right",color:p.cfNet>=0?"#40916C":"#C0392B",fontWeight:600 }}>{p.cfNet>=0?"+":""}{Math.round(p.cfNet/12).toLocaleString("fr-FR")} €</td>
+                            <td style={{ padding:"6px 6px",textAlign:"right",color:"#FFFFFF" }}>{Math.round(p.valBien/1000)}k€</td>
+                            <td style={{ padding:"6px 6px",textAlign:"right",color:p.an===20?"#E8C050":"#FFFFFF",fontWeight:p.an===20?700:400 }}>{Math.round(p.patrimoine/1000)}k€</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div style={{ marginTop:10,display:"flex",gap:8,flexWrap:"wrap" }}>
+                    {[
+                      ["Patrimoine an 10",Math.round(projection20[9]?.patrimoine||0),"#E8C050"],
+                      ["Patrimoine an 20",Math.round(projection20[19]?.patrimoine||0),"#E8C050"],
+                      ["Loyer estimé an 20",Math.round((projection20[19]?.loyer||0)/12),"#40916C"],
+                    ].map(([lbl,val,c])=>(
+                      <div key={lbl} style={{ flex:1,minWidth:100,background:"#111",borderRadius:7,padding:"8px 10px",textAlign:"center" }}>
+                        <div style={{ fontSize:8,color:"#FFFFFF",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:3 }}>{lbl}</div>
+                        <div style={{ fontSize:14,fontWeight:700,color:c }}>{Math.round(val).toLocaleString("fr-FR")} €</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop:8,fontSize:8,color:"#FFFFFF" }}>
+                    ℹ Patrimoine net = valeur du bien − capital restant dû sur le crédit. Projection indicative basée sur les hypothèses actuelles.
+                  </div>
+                </div>
+
+                {/* Récapitulatif */}
+                <div style={{ fontSize:9,fontWeight:600,textTransform:"uppercase",letterSpacing:"2px",color:"#FFFFFF",marginBottom:8 }}>◈ Récapitulatif complet</div>
+                {[
+                  ["Prix d'achat",fmtE(prixAchat)],["Frais de notaire",fmtE(fraisNotE)],["Travaux",fmtE(travaux)],
+                  ...(budAmblTot>0?[["Ameublement",fmtE(budAmblTot)]]:
+                  []),
+                  ["Investissement total",fmtE(invTotal)],["Apport",fmtE(apport)],
+                  ["Crédit immobilier",fmtE(emprunImmo)],
+                  ...(emprunTrax>0?[["Prêt travaux",fmtE(emprunTrax)]]:
+                  []),
+                  ...(emprunAmbl>0?[["Crédit conso",fmtE(emprunAmbl)]]:
+                  []),
+                  ["Mensualité totale",fmtE(mensTot)],["Loyer annuel net",fmtE(loyerNet)],
+                  ["Charges annuelles",fmtE(charges)],["Impôt + PS/an",fmtE(impot+ps)],
+                  ["Cash-flow annuel net",fmtE(cfNet)],
+                  ["Rentabilité brute",fmtP(rBrute)],["Rentabilité nette",fmtP(rNette)],["Rentabilité nette-nette",fmtP(rNN)],
+                ].map(([k,v],i)=>(
+                  <div key={k} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid #1A1A1A",fontSize:11 }}>
+                    <span style={{ color:"#FFFFFF",letterSpacing:"0.3px" }}>{k}</span>
+                    <span style={{ fontWeight:600,color:"#FFFFFF",fontVariantNumeric:"tabular-nums" }}>{v}</span>
+                  </div>
+                ))}
+
+                {/* BOUTONS SAUVEGARDER / PDF */}
+                <div className="no-print" style={{ marginTop:16, display:"flex", flexDirection:"column", gap:8 }}>
+                  {/* Nom du bien */}
+                  <div style={{ background:"#111", border:"1px solid #2C2C2C", borderRadius:8, padding:"10px 12px" }}>
+                    <div style={{ fontSize:9, textTransform:"uppercase", letterSpacing:"1.5px", color:"#E8C050", marginBottom:6 }}>Nommer ce bien (pour la comparaison)</div>
+                    <input
+                      type="text"
+                      value={nomBien}
+                      onChange={e=>setNomBien(e.target.value)}
+                      placeholder="Ex: Appart Lyon T2 centre, Maison Nantes..."
+                      style={{ ...iS, fontSize:12 }}
+                    />
+                  </div>
+                  {/* Bouton sauvegarder */}
+                  <button onClick={()=>{
+                    if(onSauvegarder) onSauvegarder({
+                      nom: nomBien || `Bien — ${new Date().toLocaleDateString("fr-FR")}`,
+                      prixAchat, invTotal, loyer, cfNet, rBrute, rNette, rNN,
+                      tri10, tri20, regime, travaux, mensTot, surface, ville,
+                      apport, duree, tauxCredit, loyerNet, charges, impot, ps,
+                    });
+                  }} style={{ background:"linear-gradient(135deg,#E8C050,#C9A84C)", border:"none", borderRadius:8, padding:"13px", color:"#0A0A0A", fontSize:12, fontWeight:700, cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", textTransform:"uppercase" }}>
+                    ◈ Sauvegarder ce bien pour comparer
+                  </button>
+                  {/* Bouton PDF */}
+                  <button onClick={()=>{ if(onPDF) onPDF(); }} style={{ background:"transparent", border:"1px solid #2C2C2C", borderRadius:8, padding:"11px", color:"#FFFFFF", fontSize:11, fontWeight:500, cursor:"pointer", fontFamily:"inherit", letterSpacing:"0.5px" }}>
+                    ⬇ Exporter en PDF / Imprimer
+                  </button>
+                </div>
+
+                <div style={{ marginTop:12, padding:"9px 12px", background:"#0F0D00", border:"1px solid #E8C05011", borderRadius:7, fontSize:9, color:"#FFFFFF", letterSpacing:"0.3px" }}>
+                  Simulation indicative — ne constitue pas un conseil fiscal ou financier. Consultez un expert-comptable avant tout investissement.
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      );
+    }
+
+    // ─── PAGE COMPARAISON ─────────────────────────────────────────────────────
+    function PageComparaison({ biens, onSupprimer }) {
+      const fmt  = n => Math.round(n).toLocaleString("fr-FR");
+      const fmtE = n => `${Math.round(n).toLocaleString("fr-FR")} €`;
+      const fmtP = n => `${n.toFixed(2)}%`;
+
+      if(!biens || biens.length === 0) return (
+        <div style={{ padding:"40px 20px", textAlign:"center" }}>
+          <div style={{ fontSize:40, marginBottom:16 }}>🏘️</div>
+          <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:"#E8C050", marginBottom:8 }}>Aucun bien sauvegardé</div>
+          <div style={{ fontSize:12, color:"#FFFFFF" }}>Simulez un bien et cliquez sur "Sauvegarder ce bien" pour l'ajouter à la comparaison.</div>
+        </div>
+      );
+
+      const criteres = [
+        { key:"nom",       label:"Bien",                    fmt: v=>v,        highlight:false },
+        { key:"prixAchat", label:"Prix d'achat",            fmt: fmtE,        highlight:false },
+        { key:"invTotal",  label:"Investissement total",    fmt: fmtE,        highlight:false },
+        { key:"loyer",     label:"Loyer mensuel",           fmt: v=>fmtE(v),  highlight:false },
+        { key:"cfNet",     label:"Cash-flow net/mois",      fmt: v=>`${v>=0?"+":""}${fmtE(v/12)}`, highlight:true, better:"max" },
+        { key:"rBrute",    label:"Rentabilité brute",       fmt: fmtP,        highlight:true, better:"max" },
+        { key:"rNette",    label:"Rentabilité nette",       fmt: fmtP,        highlight:true, better:"max" },
+        { key:"rNN",       label:"Rentabilité nette-nette", fmt: fmtP,        highlight:true, better:"max" },
+        { key:"tri10",     label:"TRI 10 ans",              fmt: v=>v!=null?fmtP(v):"N/A", highlight:true, better:"max" },
+        { key:"tri20",     label:"TRI 20 ans",              fmt: v=>v!=null?fmtP(v):"N/A", highlight:true, better:"max" },
+        { key:"regime",    label:"Régime fiscal",           fmt: v=>REGIME_INFO[v]?.label||v, highlight:false },
+        { key:"travaux",   label:"Budget travaux",          fmt: fmtE,        highlight:false },
+        { key:"mensTot",   label:"Mensualité totale",       fmt: fmtE,        highlight:true, better:"min" },
+      ];
+
+      return (
+        <div style={{ padding:"12px 12px 40px", maxWidth:600, margin:"0 auto" }}>
+          <div style={{ marginBottom:16 }}>
+            <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:"#E8C050", marginBottom:4 }}>Comparaison des biens</div>
+            <div style={{ fontSize:10, color:"#FFFFFF", letterSpacing:"1px" }}>{biens.length} bien{biens.length>1?"s":""} sauvegardé{biens.length>1?"s":""} · Le meilleur est surligné en or</div>
+          </div>
+
+          {/* Tableau de comparaison */}
+          <div style={{ overflowX:"auto" }}>
+            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+              <thead>
+                <tr>
+                  <td style={{ padding:"8px 10px", color:"#EEEEEE", fontSize:9, textTransform:"uppercase", letterSpacing:"1px", borderBottom:"1px solid #2C2C2C", minWidth:120 }}></td>
+                  {biens.map((b,i) => (
+                    <th key={i} style={{ padding:"8px 10px", color:"#E8C050", fontSize:10, fontWeight:600, textAlign:"center", borderBottom:"1px solid #E8C05033", minWidth:110, position:"relative" }}>
+                      <div>{b.nom || `Bien ${i+1}`}</div>
+                      <button onClick={()=>onSupprimer(i)} style={{ position:"absolute", top:2, right:2, background:"transparent", border:"none", color:"#EEEEEE", cursor:"pointer", fontSize:12 }}>✕</button>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {criteres.map((c,ci) => {
+                  // Trouver le meilleur
+                  const vals = biens.map(b => b[c.key]);
+                  let bestIdx = -1;
+                  if(c.highlight && c.better) {
+                    const nums = vals.map(v => typeof v === "number" ? v : null);
+                    const valids = nums.filter(v=>v!==null);
+                    if(valids.length > 1) {
+                      const best = c.better==="max" ? Math.max(...valids) : Math.min(...valids);
+                      bestIdx = nums.indexOf(best);
+                    }
+                  }
+                  return (
+                    <tr key={ci} style={{ borderBottom:"1px solid #1A1A1A" }}>
+                      <td style={{ padding:"8px 10px", color:"#FFFFFF", fontSize:10, letterSpacing:"0.5px" }}>{c.label}</td>
+                      {biens.map((b,i) => {
+                        const isBest = i === bestIdx;
+                        const val = b[c.key];
+                        const isNeg = typeof val === "number" && c.key==="cfNet" && val < 0;
+                        return (
+                          <td key={i} style={{ padding:"8px 10px", textAlign:"center", background:isBest?"#0F0D00":"transparent", color:isBest?"#E8C050":isNeg?"#C0392B":"#FFFFFF", fontWeight:isBest?700:400, fontSize:11, borderLeft:"1px solid #1A1A1A" }}>
+                            {isBest && <span style={{ fontSize:8, marginRight:3 }}>◆</span>}
+                            {c.fmt(val)}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ marginTop:16, padding:"10px 14px", background:"#0F0D00", border:"1px solid #E8C05022", borderRadius:8, fontSize:9, color:"#FFFFFF" }}>
+            ◆ = meilleur résultat sur ce critère · Simulation indicative, ne constitue pas un conseil financier.
+          </div>
+        </div>
+      );
+    }
+
+    // ─── APP PRINCIPALE ────────────────────────────────────────────────────────
+    function AppPrincipale() {
+      const [page, setPage] = useState("sim");
+      const [biensSauv, setBiensSauv] = useState(() => {
+        try { return JSON.parse(localStorage.getItem("immo_biens")||"[]"); } catch(e){ return []; }
+      });
+      const [derniereBien, setDerniereBien] = useState(null);
+      const [notifSave, setNotifSave] = useState(false);
+
+      const sauvegarderBien = (bien) => {
+        if(biensSauv.length >= 5) { alert("Maximum 5 biens sauvegardés. Supprimez-en un dans l'onglet Comparaison."); return; }
+        const nouveau = [...biensSauv, bien];
+        setBiensSauv(nouveau);
+        try { localStorage.setItem("immo_biens", JSON.stringify(nouveau)); } catch(e){}
+        setNotifSave(true);
+        setTimeout(()=>setNotifSave(false), 3000);
+      };
+
+      const supprimerBien = (idx) => {
+        const nouveau = biensSauv.filter((_,i)=>i!==idx);
+        setBiensSauv(nouveau);
+        try { localStorage.setItem("immo_biens", JSON.stringify(nouveau)); } catch(e){}
+      };
+
+      const imprimerPDF = () => {
+        window.print();
+      };
+
+      const TABS = [
+        { id:"sim",  label:"Simulateur", icon:"◈" },
+        { id:"comp", label:"Comparer",   icon:"⊞", badge: biensSauv.length > 0 ? biensSauv.length : null },
+      ];
+
+      return (
+        <div style={{ background:"#0A0A0A", minHeight:"100vh" }}>
+
+          {/* HEADER */}
+          <div className="no-print" style={{ background:"#0A0A0A", padding:"18px 18px 0", borderBottom:"1px solid #1A1A1A" }}>
+            <div style={{ maxWidth:600, margin:"0 auto" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", paddingBottom:12 }}>
+                <div>
+                  <div style={{ fontFamily:"'Cormorant Garamond','Georgia',serif", fontSize:22, fontWeight:600, color:"#FFFFFF", letterSpacing:"0.5px" }}>ImmoRentabilité</div>
+                  <div style={{ fontSize:9, letterSpacing:"2.5px", textTransform:"uppercase", color:"#FFFFFF", marginTop:2 }}>Simulateur d'Investissement Locatif · France 2025</div>
+                </div>
+                <button onClick={imprimerPDF} style={{ background:"#0F0D00", border:"1px solid #E8C05044", borderRadius:7, padding:"6px 12px", color:"#E8C050", fontSize:10, fontWeight:600, cursor:"pointer", fontFamily:"inherit", letterSpacing:"0.5px" }}>
+                  ⬇ PDF
+                </button>
+              </div>
+              <div style={{ height:1, background:"linear-gradient(90deg,transparent,#E8C050,transparent)" }}></div>
+
+              {/* TABS */}
+              <div style={{ display:"flex", gap:0, marginTop:0 }}>
+                {TABS.map(t => (
+                  <button key={t.id} onClick={()=>setPage(t.id)}
+                    style={{ flex:1, padding:"10px 8px", border:"none", background:"transparent", borderBottom:`2px solid ${page===t.id?"#E8C050":"transparent"}`, color:page===t.id?"#E8C050":"#555", fontSize:10, fontWeight:page===t.id?700:400, cursor:"pointer", fontFamily:"inherit", letterSpacing:"1px", textTransform:"uppercase", display:"flex", alignItems:"center", justifyContent:"center", gap:5, transition:"all 0.2s" }}>
+                    <span>{t.icon}</span>
+                    <span>{t.label}</span>
+                    {t.badge && <span style={{ background:"#E8C050", color:"#0A0A0A", borderRadius:99, padding:"0 5px", fontSize:9, fontWeight:800 }}>{t.badge}</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* NOTIF SAUVEGARDE */}
+          {notifSave && (
+            <div className="no-print" style={{ position:"fixed", bottom:20, left:"50%", transform:"translateX(-50%)", background:"#0F0D00", border:"1px solid #E8C050", borderRadius:10, padding:"10px 20px", color:"#E8C050", fontSize:12, fontWeight:600, zIndex:999, boxShadow:"0 4px 20px rgba(0,0,0,0.5)" }}>
+              ✓ Bien sauvegardé — visible dans l'onglet Comparer
+            </div>
+          )}
+
+          {/* CONTENU */}
+          {page==="sim"  && <PageSimulateur onSauvegarder={sauvegarderBien} onPDF={imprimerPDF} />}
+          {page==="comp" && <PageComparaison biens={biensSauv} onSupprimer={supprimerBien} />}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<AppPrincipale />);
+  </script>
+</body>
+</html>
